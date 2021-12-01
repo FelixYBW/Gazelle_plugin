@@ -60,7 +60,10 @@ class ColumnarShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     val computePidTime: SQLMetric,
     val splitTime: SQLMetric,
     val spillTime: SQLMetric,
-    val compressTime: SQLMetric)
+    val compressTime: SQLMetric,
+    val peakMemoryAllocated: SQLMetric,
+    val peakMemoryPreAllocated: SQLMetric
+    )
     extends ShuffleDependency[K, V, C](
       _rdd,
       partitioner,

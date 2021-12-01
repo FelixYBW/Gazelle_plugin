@@ -21,6 +21,7 @@
 #include <arrow/memory_pool.h>
 #include <arrow/util/bit_util.h>
 #include <arrow/util/checked_cast.h>
+#include <arrow/type.h>
 #include <gandiva/node.h>
 #include <gandiva/projector.h>
 #include <gandiva/tree_expr_builder.h>
@@ -806,14 +807,14 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
       auto arr =
           std::static_pointer_cast<arrow::BinaryArray>(rb.column(binary_array_idx_[i]));
       auto length = arr->value_offset(num_rows) - arr->value_offset(0);
-      binary_array_empirical_size_[i] = length / num_rows;
+      binary_array_empirical_size_[i] = length / num_rows + 4;
       size_per_row += binary_array_empirical_size_[i];
     }
     for (int i = 0; i < large_binary_array_idx_.size(); ++i) {
       auto arr = std::static_pointer_cast<arrow::LargeBinaryArray>(
           rb.column(large_binary_array_idx_[i]));
       auto length = arr->value_offset(num_rows) - arr->value_offset(0);
-      large_binary_array_empirical_size_[i] = length / num_rows;
+      large_binary_array_empirical_size_[i] = length / num_rows + 4;
       size_per_row += large_binary_array_empirical_size_[i];
     }
     empirical_size_calculated_ = true;
@@ -831,7 +832,10 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
       ? options_.offheap_per_task / 4 / size_per_row / num_partitions_
       : options_.buffer_size;
  
-  // prepare partition buffers and spill if necessary
+  // prepare partition buffers and spill on necessary
+  uint64_t peak_memory_prealloc = 0;
+  uint64_t peak_memory_alloc = 0;
+
   for (auto pid = 0; pid < num_partitions_; ++pid) {
     if (partition_id_cnt_[pid] > 0 &&
         partition_buffer_idx_base_[pid] + partition_id_cnt_[pid] >
@@ -841,11 +845,90 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
       // make sure the splitted record batch can be filled
       if ( partition_id_cnt_[pid] > new_size )
         new_size = partition_id_cnt_[pid];
+      peak_memory_prealloc += new_size * size_per_row;
       if (options_.prefer_spill) {
         // if prefer_spill is set, cache current record batch
         if (partition_buffer_size_[pid] == 0) {  // first allocate?
           RETURN_NOT_OK(AllocatePartitionBuffers(pid, new_size));
         } else {  // not first allocate, spill
+
+          // calculated the total memory researved before spill
+          for (auto col = 0; col < fixed_width_array_idx_.size(); ++col) {
+            auto col_idx = fixed_width_array_idx_[col];
+            peak_memory_alloc += arrow::bit_width(column_type_id_[col]->id()) / 8 *
+                                 partition_buffer_size_[pid];
+          }
+
+          for (auto col = 0; col < binary_array_idx_.size();col++) {
+            peak_memory_alloc += partition_binary_builders_[col][pid]->capacity() *
+                                 sizeof(arrow::BinaryType::offset_type);
+            peak_memory_alloc += partition_binary_builders_[col][pid]->value_data_capacity();
+          }
+          for (auto col = 0; col < large_binary_array_idx_.size(); ++col) {
+            peak_memory_alloc += partition_large_binary_builders_[col][pid]->capacity() *
+                                 sizeof(arrow::LargeBinaryType::offset_type);
+            peak_memory_alloc +=
+                partition_large_binary_builders_[col][pid]->value_data_capacity();
+          }
+          for (auto col = 0; col < list_array_idx_.size(); ++col) {
+            peak_memory_alloc += partition_list_builders_[col][pid]->capacity() *
+                                 sizeof(arrow::ListType::offset_type);
+            auto src_arr =
+              std::static_pointer_cast<arrow::ListArray>(rb.column(list_array_idx_[col]));
+
+            switch (src_arr->value_type()->id()) {
+              case arrow::BooleanType::type_id:
+                peak_memory_alloc +=
+                    partition_list_builders_[col][pid]->value_builder()->capacity() * sizeof(arrow::BooleanType);
+                break;
+              case arrow::UInt8Type::type_id:
+              case arrow::Int8Type::type_id:
+                peak_memory_alloc +=
+                    partition_list_builders_[col][pid]->value_builder()->capacity() *
+                    sizeof(arrow::Int8Type);
+                break;
+              case arrow::UInt16Type::type_id:
+              case arrow::Int16Type::type_id:
+                peak_memory_alloc +=
+                    partition_list_builders_[col][pid]->value_builder()->capacity() *
+                    sizeof(arrow::UInt16Type);
+                break;
+              case arrow::UInt32Type::type_id:
+              case arrow::Int32Type::type_id:
+              case arrow::FloatType::type_id:
+              case arrow::Date32Type::type_id:
+                peak_memory_alloc +=
+                    partition_list_builders_[col][pid]->value_builder()->capacity() *
+                    sizeof(arrow::UInt32Type);
+                break;
+              case arrow::UInt64Type::type_id:
+              case arrow::Int64Type::type_id:
+              case arrow::Date64Type::type_id:
+                peak_memory_alloc +=
+                    partition_list_builders_[col][pid]->value_builder()->capacity() *
+                    sizeof(arrow::UInt64Type);
+                break;
+              case arrow::Decimal128Type::type_id:
+                peak_memory_alloc +=
+                    partition_list_builders_[col][pid]->value_builder()->capacity() *
+                    sizeof(arrow::Decimal128Type);
+                break;
+              case arrow::StringType::type_id:
+              case arrow::BinaryType::type_id:
+                peak_memory_alloc +=
+                    partition_list_builders_[col][pid]->value_builder()->capacity();
+                break;
+            }
+              
+          }
+
+
+          partition_large_list_builders_.resize(large_list_array_idx_.size());
+          for (auto i = 0; i < large_list_array_idx_.size(); ++i) {
+            partition_large_list_builders_[i].resize(num_partitions_);
+          }
+
+
           if (partition_id_cnt_[pid] > partition_buffer_size_[pid]) {  
             // if the partition size after split is already larger than allocated buffer size, need reallocate
             // TODO(): CacheRecordBatch will try to reset builder buffer
@@ -876,6 +959,14 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
       }
     }
   }
+
+  if (peak_memory_prealloc > this->peak_memory_preallocated_) {
+    this->peak_memory_preallocated_ = peak_memory_prealloc;
+  }
+  if (peak_memory_alloc > this->peak_memory_allocated_) {
+    this->peak_memory_allocated_ = peak_memory_allocated_;
+  }
+
 #ifdef DEBUG
   std::cout << "Total bytes allocated: " << options_.memory_pool->bytes_allocated()
             << std::endl;

@@ -25,6 +25,9 @@ public class SplitResult {
   private final long totalCompressTime; // overlaps with totalSpillTime and totalWriteTime
   private final long totalBytesWritten;
   private final long totalBytesSpilled;
+  private final long peakMemoryAllocated;
+  private final long peakMemoryPreAllocated;
+  
   private final long[] partitionLengths;
   private final long[] rawPartitionLengths;
 
@@ -35,6 +38,8 @@ public class SplitResult {
       long totalCompressTime,
       long totalBytesWritten,
       long totalBytesSpilled,
+      long peakMemoryAllocated,
+      long peakMemoryPreAllocated,
       long[] partitionLengths,
       long[] rawPartitionLengths) {
     this.totalComputePidTime = totalComputePidTime;
@@ -43,6 +48,8 @@ public class SplitResult {
     this.totalCompressTime = totalCompressTime;
     this.totalBytesWritten = totalBytesWritten;
     this.totalBytesSpilled = totalBytesSpilled;
+    this.peakMemoryAllocated = peakMemoryAllocated;
+    this.peakMemoryPreAllocated = peakMemoryPreAllocated;
     this.partitionLengths = partitionLengths;
     this.rawPartitionLengths = rawPartitionLengths;
   }
@@ -69,6 +76,14 @@ public class SplitResult {
 
   public long getTotalBytesSpilled() {
     return totalBytesSpilled;
+  }
+  
+  public long getPeakMemoryAllocated() {
+    return peakMemoryAllocated;
+  }
+  
+  public long getPeakMemoryPreAllocated() {
+    return peakMemoryPreAllocated;
   }
 
   public long[] getPartitionLengths() {

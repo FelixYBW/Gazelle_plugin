@@ -76,6 +76,8 @@ case class ColumnarShuffleExchangeExec(
     "computePidTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_computepid"),
     "splitTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_split"),
     "spillTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "shuffle spill time"),
+    "peakMemoryAllocated" -> SQLMetrics.createSizeMetric(sparkContext, "peak memory allocated before spill"),
+    "peakMemoryPreAllocated" -> SQLMetrics.createSizeMetric(sparkContext, "peak memory pre allocated before split"),
     "compressTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_compress"),
     "avgReadBatchNumRows" -> SQLMetrics
       .createAverageMetric(sparkContext, "avg read batch num rows"),
@@ -140,6 +142,8 @@ case class ColumnarShuffleExchangeExec(
       longMetric("computePidTime"),
       longMetric("splitTime"),
       longMetric("spillTime"),
+      longMetric("peakMemoryAllocated"),
+      longMetric("peakMemoryPreAllocated"),
       longMetric("compressTime"))
   }
 
@@ -186,6 +190,8 @@ class ColumnarShuffleExchangeAdaptor(
     "computePidTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_computepid"),
     "splitTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_split"),
     "spillTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "shuffle spill time"),
+    "peakMemoryAllocated" -> SQLMetrics.createSizeMetric(sparkContext, "peak memory allocated"),
+    "peakMemoryPreAllocated" -> SQLMetrics.createSizeMetric(sparkContext, "peak memory pre allocated"),
     "compressTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_compress"),
     "avgReadBatchNumRows" -> SQLMetrics
       .createAverageMetric(sparkContext, "avg read batch num rows"),
@@ -237,6 +243,8 @@ class ColumnarShuffleExchangeAdaptor(
       longMetric("computePidTime"),
       longMetric("splitTime"),
       longMetric("spillTime"),
+      longMetric("peakMemoryAllocated"),
+      longMetric("peakMemoryPreAllocated"),
       longMetric("compressTime"))
   }
 
@@ -302,6 +310,8 @@ object ColumnarShuffleExchangeExec extends Logging {
       computePidTime: SQLMetric,
       splitTime: SQLMetric,
       spillTime: SQLMetric,
+      peakMemoryAllocated: SQLMetric,
+      peakMemoryPreAllocated: SQLMetric,
       compressTime: SQLMetric): ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
     val arrowFields = outputAttributes.map(attr => ConverterUtils.createArrowField(attr))
     def serializeSchema(fields: Seq[Field]): Array[Byte] = {
@@ -448,6 +458,8 @@ object ColumnarShuffleExchangeExec extends Logging {
         computePidTime = computePidTime,
         splitTime = splitTime,
         spillTime = spillTime,
+        peakMemoryAllocated = peakMemoryAllocated,
+        peakMemoryPreAllocated = peakMemoryPreAllocated,
         compressTime = compressTime)
 
     dependency

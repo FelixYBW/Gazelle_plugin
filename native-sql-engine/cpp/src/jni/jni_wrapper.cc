@@ -1214,7 +1214,9 @@ JNIEXPORT jobject JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrappe
       split_result_class, split_result_constructor, splitter->TotalComputePidTime(),
       splitter->TotalWriteTime(), splitter->TotalSpillTime(),
       splitter->TotalCompressTime(), splitter->TotalBytesWritten(),
-      splitter->TotalBytesSpilled(), partition_length_arr, raw_partition_length_arr);
+      splitter->TotalBytesSpilled(), splitter->PeakMemoryAllocated(),
+      splitter->PeakMemoryPreAllocated(), partition_length_arr,
+      raw_partition_length_arr);
 
   return split_result;
   JNI_METHOD_END(nullptr)

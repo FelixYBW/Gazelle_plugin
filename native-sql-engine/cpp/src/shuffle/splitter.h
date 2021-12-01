@@ -96,6 +96,10 @@ class Splitter {
 
   int64_t TotalComputePidTime() const { return total_compute_pid_time_; }
 
+  int64_t PeakMemoryAllocated() const { return this->peak_memory_allocated_; }
+  int64_t PeakMemoryPreAllocated() const { return this->peak_memory_preallocated_; }
+
+
   const std::vector<int64_t>& PartitionLengths() const { return partition_lengths_; }
 
   const std::vector<int64_t>& RawPartitionLengths() const {

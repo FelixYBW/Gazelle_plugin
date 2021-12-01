@@ -182,6 +182,15 @@ class ColumnarShuffleWriter[K, V](
     dep.compressTime.add(splitResult.getTotalCompressTime)
     dep.computePidTime.add(splitResult.getTotalComputePidTime)
     dep.bytesSpilled.add(splitResult.getTotalBytesSpilled)
+    if ( dep.peakMemoryAllocated.value < splitResult.getPeakMemoryAllocated)
+    {
+      dep.peakMemoryAllocated.set(splitResult.getPeakMemoryAllocated)
+    }
+    if ( dep.peakMemoryPreAllocated.value < splitResult.getPeakMemoryPreAllocated)
+    {
+      dep.peakMemoryPreAllocated.set(splitResult.getPeakMemoryPreAllocated)
+    }
+    
     writeMetrics.incBytesWritten(splitResult.getTotalBytesWritten)
     writeMetrics.incWriteTime(splitResult.getTotalWriteTime + splitResult.getTotalSpillTime)
 
