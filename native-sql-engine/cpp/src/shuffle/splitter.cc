@@ -271,10 +271,18 @@ arrow::Status Splitter::Init() {
   ARROW_ASSIGN_OR_RAISE(column_type_id_, ToSplitterTypeId(schema_->fields()));
 
   partition_writer_.resize(num_partitions_);
+
+  // pre-computed row count for each partition after the record batch split
   partition_id_cnt_.resize(num_partitions_);
+  // pre-allocated buffer size for each partition, unit is row count
   partition_buffer_size_.resize(num_partitions_);
+
+  // start index for each partition when new record batch starts to split
   partition_buffer_idx_base_.resize(num_partitions_);
+  // the offset of each partition during record batch split
   partition_buffer_idx_offset_.resize(num_partitions_);
+
+
   partition_cached_recordbatch_.resize(num_partitions_);
   partition_cached_recordbatch_size_.resize(num_partitions_);
   partition_lengths_.resize(num_partitions_);
@@ -432,6 +440,7 @@ arrow::Status Splitter::Stop() {
 
 arrow::Status Splitter::CacheRecordBatch(int32_t partition_id, bool reset_buffers) {
   if (partition_buffer_idx_base_[partition_id] > 0) {
+    // already filled
     auto fixed_width_idx = 0;
     auto binary_idx = 0;
     auto large_binary_idx = 0;
@@ -447,9 +456,11 @@ arrow::Status Splitter::CacheRecordBatch(int32_t partition_id, bool reset_buffer
         case arrow::StringType::type_id: {
           auto& builder = partition_binary_builders_[binary_idx][partition_id];
           if (reset_buffers) {
+            //reset buffer
             RETURN_NOT_OK(builder->Finish(&arrays[i]));
             builder->Reset();
           } else {
+            //allocate the same size
             auto data_size = builder->value_data_length();
             RETURN_NOT_OK(builder->Finish(&arrays[i]));
             builder->Reset();
@@ -532,8 +543,11 @@ arrow::Status Splitter::CacheRecordBatch(int32_t partition_id, bool reset_buffer
     TIME_NANO_OR_RAISE(total_compress_time_,
                        arrow::ipc::GetRecordBatchPayload(
                            *batch, options_.ipc_write_options, payload.get()));
+    // cache the record batch
     partition_cached_recordbatch_size_[partition_id] += payload->body_length;
     partition_cached_recordbatch_[partition_id].push_back(std::move(payload));
+
+    //reset the buffer base cnt
     partition_buffer_idx_base_[partition_id] = 0;
   }
   return arrow::Status::OK();
@@ -793,26 +807,32 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
     if (partition_id_cnt_[pid] > 0 &&
         partition_buffer_idx_base_[pid] + partition_id_cnt_[pid] >
             partition_buffer_size_[pid]) {
+      // if the size to be filled + allready filled > the buffer size, need to allocate new buffer
       auto new_size = partition_id_cnt_[pid] > options_.buffer_size
                           ? partition_id_cnt_[pid]
                           : options_.buffer_size;
       if (options_.prefer_spill) {
+        // if prefer_spill is set, cache current record batch
         if (partition_buffer_size_[pid] == 0) {  // first allocate?
           RETURN_NOT_OK(AllocatePartitionBuffers(pid, new_size));
         } else {  // not first allocate, spill
-          if (partition_id_cnt_[pid] > partition_buffer_size_[pid]) {  // need reallocate?
+          if (partition_id_cnt_[pid] > partition_buffer_size_[pid]) {  
+            // if the partition size after split is already larger than allocated buffer size, need reallocate
             // TODO(): CacheRecordBatch will try to reset builder buffer
             // AllocatePartitionBuffers will then Reserve memory for builder based on last
             // recordbatch, the logic on reservation size should be cleaned up
-            RETURN_NOT_OK(CacheRecordBatch(pid, true));
+            RETURN_NOT_OK(CacheRecordBatch(pid, /*reset_buffers = */ true));
+            //splill immediately
             RETURN_NOT_OK(SpillPartition(pid));
             RETURN_NOT_OK(AllocatePartitionBuffers(pid, new_size));
           } else {
-            RETURN_NOT_OK(CacheRecordBatch(pid, false));
+            //partition size after split is smaller than buffer size, no need to reset buffer, reuse it.
+            RETURN_NOT_OK(CacheRecordBatch(pid, /*reset_buffers = */ false));
             RETURN_NOT_OK(SpillPartition(pid));
           }
         }
       } else {
+        // if prefer_spill is disabled, cache the record batch
         RETURN_NOT_OK(CacheRecordBatch(pid, true));
 #ifdef DEBUG
         std::cout << "Attempt to allocate partition buffer, partition id: " +

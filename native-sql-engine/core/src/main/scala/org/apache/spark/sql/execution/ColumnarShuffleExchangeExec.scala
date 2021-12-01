@@ -190,6 +190,7 @@ class ColumnarShuffleExchangeAdaptor(
     "avgReadBatchNumRows" -> SQLMetrics
       .createAverageMetric(sparkContext, "avg read batch num rows"),
     "numInputRows" -> SQLMetrics.createMetric(sparkContext, "number of input rows"),
+    "peakMemoryAllocated" -> SQLMetrics.createSizeMetric(sparkContext, "peak memory preallocated"),
     "numOutputRows" -> SQLMetrics
       .createMetric(sparkContext, "number of output rows")) ++ readMetrics ++ writeMetrics
 
