@@ -284,7 +284,7 @@ jint JNI_OnLoad(JavaVM* vm, void* reserved) {
   split_result_class =
       CreateGlobalClassReference(env, "Lcom/intel/oap/vectorized/SplitResult;");
   split_result_constructor =
-      GetMethodID(env, split_result_class, "<init>", "(JJJJJJ[J)V");
+      GetMethodID(env, split_result_class, "<init>", "(JJJJJJ[J[J)V");
 
   metrics_builder_class =
       CreateGlobalClassReference(env, "Lcom/intel/oap/vectorized/MetricsObject;");
@@ -1029,7 +1029,7 @@ Java_com_intel_oap_vectorized_ExpressionEvaluatorJniWrapper_nativeEvaluate2(
 JNIEXPORT jlong JNICALL
 Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_nativeMake(
     JNIEnv* env, jobject, jstring partitioning_name_jstr, jint num_partitions,
-    jbyteArray schema_arr, jbyteArray expr_arr, jint buffer_size,
+    jbyteArray schema_arr, jbyteArray expr_arr, jlong offheap_per_task, jint buffer_size,
     jstring compression_type_jstr, jstring data_file_jstr, jint num_sub_dirs,
     jstring local_dirs_jstr, jboolean prefer_spill, jlong memory_pool_id) {
   JNI_METHOD_START
@@ -1056,6 +1056,8 @@ Java_com_intel_oap_vectorized_ShuffleSplitterJniWrapper_nativeMake(
   if (buffer_size > 0) {
     splitOptions.buffer_size = buffer_size;
   }
+  splitOptions.offheap_per_task = offheap_per_task;
+
   if (num_sub_dirs > 0) {
     splitOptions.num_sub_dirs = num_sub_dirs;
   }
@@ -1197,15 +1199,22 @@ JNIEXPORT jobject JNICALL Java_com_intel_oap_vectorized_ShuffleSplitterJniWrappe
 
   JniAssertOkOrThrow(splitter->Stop(), "Native split: splitter stop failed");
 
-  const auto& partition_length = splitter->PartitionLengths();
-  auto partition_length_arr = env->NewLongArray(partition_length.size());
-  auto src = reinterpret_cast<const jlong*>(partition_length.data());
-  env->SetLongArrayRegion(partition_length_arr, 0, partition_length.size(), src);
+  const auto& partition_lengths = splitter->PartitionLengths();
+  auto partition_length_arr = env->NewLongArray(partition_lengths.size());
+  auto src = reinterpret_cast<const jlong*>(partition_lengths.data());
+  env->SetLongArrayRegion(partition_length_arr, 0, partition_lengths.size(), src);
+
+  const auto& raw_partition_lengths = splitter->RawPartitionLengths();
+  auto raw_partition_length_arr = env->NewLongArray(raw_partition_lengths.size());
+  auto raw_src = reinterpret_cast<const jlong*>(raw_partition_lengths.data());
+  env->SetLongArrayRegion(raw_partition_length_arr, 0, raw_partition_lengths.size(),
+                          raw_src);
+
   jobject split_result = env->NewObject(
       split_result_class, split_result_constructor, splitter->TotalComputePidTime(),
       splitter->TotalWriteTime(), splitter->TotalSpillTime(),
       splitter->TotalCompressTime(), splitter->TotalBytesWritten(),
-      splitter->TotalBytesSpilled(), partition_length_arr);
+      splitter->TotalBytesSpilled(), partition_length_arr, raw_partition_length_arr);
 
   return split_result;
   JNI_METHOD_END(nullptr)

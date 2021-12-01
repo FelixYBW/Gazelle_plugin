@@ -18,7 +18,6 @@
 package org.apache.spark.shuffle
 
 import java.io.IOException
-
 import com.google.common.annotations.VisibleForTesting
 import com.intel.oap.GazellePluginConfig
 import com.intel.oap.expression.ConverterUtils
@@ -34,7 +33,7 @@ import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.util.Utils
 
 import scala.collection.JavaConverters._
-import scala.collection.mutable.ListBuffer
+import scala.collection.mutable.{ArrayBuffer, ListBuffer}
 
 class ColumnarShuffleWriter[K, V](
     shuffleBlockResolver: IndexShuffleBlockResolver,
@@ -58,8 +57,12 @@ class ColumnarShuffleWriter[K, V](
   private var mapStatus: MapStatus = _
 
   private val localDirs = blockManager.diskBlockManager.localDirs.mkString(",")
-  private val nativeBufferSize =
-    conf.getInt("spark.sql.execution.arrow.maxRecordsPerBatch", 4096)
+
+  private val offheapSize = conf.getSizeAsBytes("spark.memory.offHeap.size", 0)
+  private val executorNum = conf.getInt("spark.executor.cores",1)
+  private val offheapPerTask = offheapSize / executorNum;
+
+  private val nativeBufferSize = GazellePluginConfig.getConf.shuffleSplitDefaultSize
 
   private val customizedCompressCodec =
     GazellePluginConfig.getConf.columnarShuffleUseCustomizedCompressionCodec
@@ -78,6 +81,8 @@ class ColumnarShuffleWriter[K, V](
 
   private var partitionLengths: Array[Long] = _
 
+  private var rawPartitionLengths: Array[Long] = _
+
   private var firstRecordBatch: Boolean = true
 
   @throws[IOException]
@@ -93,6 +98,7 @@ class ColumnarShuffleWriter[K, V](
     if (nativeSplitter == 0) {
       nativeSplitter = jniWrapper.make(
         dep.nativePartitioning,
+        offheapPerTask,
         nativeBufferSize,
         defaultCompressionCodec,
         dataTmp.getAbsolutePath,
@@ -180,6 +186,7 @@ class ColumnarShuffleWriter[K, V](
     writeMetrics.incWriteTime(splitResult.getTotalWriteTime + splitResult.getTotalSpillTime)
 
     partitionLengths = splitResult.getPartitionLengths
+    rawPartitionLengths = splitResult.getRawPartitionLengths
     try {
       shuffleBlockResolver.writeIndexFileAndCommit(
         dep.shuffleId,
@@ -191,7 +198,12 @@ class ColumnarShuffleWriter[K, V](
         logError(s"Error while deleting temp file ${dataTmp.getAbsolutePath}")
       }
     }
-    mapStatus = MapStatus(blockManager.shuffleServerId, partitionLengths, mapId)
+
+    // fixme workaround: to store uncompressed sizes on the rhs of (maybe) compressed sizes
+    val unionPartitionLengths = ArrayBuffer[Long]()
+    unionPartitionLengths ++= partitionLengths
+    unionPartitionLengths ++= rawPartitionLengths
+    mapStatus = MapStatus(blockManager.shuffleServerId, unionPartitionLengths.toArray, mapId)
   }
 
   override def stop(success: Boolean): Option[MapStatus] = {

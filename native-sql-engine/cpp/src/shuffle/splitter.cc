@@ -286,6 +286,7 @@ arrow::Status Splitter::Init() {
   partition_cached_recordbatch_.resize(num_partitions_);
   partition_cached_recordbatch_size_.resize(num_partitions_);
   partition_lengths_.resize(num_partitions_);
+  raw_partition_lengths_.resize(num_partitions_);
 
   for (int i = 0; i < column_type_id_.size(); ++i) {
     switch (column_type_id_[i]->id()) {
@@ -438,6 +439,25 @@ arrow::Status Splitter::Stop() {
   return arrow::Status::OK();
 }
 
+int64_t batch_nbytes(std::shared_ptr<arrow::RecordBatch> batch) {
+  int64_t accumulated = 0L;
+  if (batch == nullptr) {
+    return accumulated;
+  }
+  for (const auto& array : batch->columns()) {
+    if (array == nullptr || array->data() == nullptr) {
+      continue;
+    }
+    for (const auto& buf : array->data()->buffers) {
+      if (buf == nullptr) {
+        continue;
+      }
+      accumulated += buf->capacity();
+    }
+  }
+  return accumulated;
+}
+
 arrow::Status Splitter::CacheRecordBatch(int32_t partition_id, bool reset_buffers) {
   if (partition_buffer_idx_base_[partition_id] > 0) {
     // already filled
@@ -544,6 +564,7 @@ arrow::Status Splitter::CacheRecordBatch(int32_t partition_id, bool reset_buffer
                        arrow::ipc::GetRecordBatchPayload(
                            *batch, options_.ipc_write_options, payload.get()));
     // cache the record batch
+    raw_partition_lengths_[partition_id] += batch_nbytes(batch);
     partition_cached_recordbatch_size_[partition_id] += payload->body_length;
     partition_cached_recordbatch_[partition_id].push_back(std::move(payload));
 
@@ -778,6 +799,7 @@ arrow::Result<int32_t> Splitter::SpillLargestPartition(int64_t* size) {
 arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
   // for the first input record batch, scan binary arrays and large binary
   // arrays to get their empirical sizes
+  uint32_t size_per_row = 0;
   if (!empirical_size_calculated_) {
     auto num_rows = rb.num_rows();
     for (int i = 0; i < binary_array_idx_.size(); ++i) {
@@ -785,32 +807,40 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
           std::static_pointer_cast<arrow::BinaryArray>(rb.column(binary_array_idx_[i]));
       auto length = arr->value_offset(num_rows) - arr->value_offset(0);
       binary_array_empirical_size_[i] = length / num_rows;
+      size_per_row += binary_array_empirical_size_[i];
     }
     for (int i = 0; i < large_binary_array_idx_.size(); ++i) {
       auto arr = std::static_pointer_cast<arrow::LargeBinaryArray>(
           rb.column(large_binary_array_idx_[i]));
       auto length = arr->value_offset(num_rows) - arr->value_offset(0);
       large_binary_array_empirical_size_[i] = length / num_rows;
+      size_per_row += large_binary_array_empirical_size_[i];
     }
     empirical_size_calculated_ = true;
   }
 
   for (auto col = 0; col < fixed_width_array_idx_.size(); ++col) {
     auto col_idx = fixed_width_array_idx_[col];
+    size_per_row += arrow::bit_width(column_type_id_[col]->id()) / 8;
     if (rb.column_data(col_idx)->GetNullCount() != 0) {
       input_fixed_width_has_null_[col] = true;
     }
   }
 
+  int64_t prealloc_row_cnt = options_.offheap_per_task >0 && size_per_row >0
+      ? options_.offheap_per_task / 4 / size_per_row / num_partitions_
+      : options_.buffer_size;
+ 
   // prepare partition buffers and spill if necessary
   for (auto pid = 0; pid < num_partitions_; ++pid) {
     if (partition_id_cnt_[pid] > 0 &&
         partition_buffer_idx_base_[pid] + partition_id_cnt_[pid] >
             partition_buffer_size_[pid]) {
       // if the size to be filled + allready filled > the buffer size, need to allocate new buffer
-      auto new_size = partition_id_cnt_[pid] > options_.buffer_size
-                          ? partition_id_cnt_[pid]
-                          : options_.buffer_size;
+      auto new_size = std::min( (int32_t)prealloc_row_cnt, options_.buffer_size );
+      // make sure the splitted record batch can be filled
+      if ( partition_id_cnt_[pid] > new_size )
+        new_size = partition_id_cnt_[pid];
       if (options_.prefer_spill) {
         // if prefer_spill is set, cache current record batch
         if (partition_buffer_size_[pid] == 0) {  // first allocate?
