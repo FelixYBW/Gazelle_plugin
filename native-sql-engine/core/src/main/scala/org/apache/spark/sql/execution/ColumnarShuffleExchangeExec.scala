@@ -79,6 +79,7 @@ case class ColumnarShuffleExchangeExec(
     "peakMemoryAllocated" -> SQLMetrics.createSizeMetric(sparkContext, "peak memory allocated before spill"),
     "peakMemoryPreAllocated" -> SQLMetrics.createSizeMetric(sparkContext, "peak memory pre allocated before split"),
     "compressTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_compress"),
+    "prepareTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_prepare"),
     "avgReadBatchNumRows" -> SQLMetrics
       .createAverageMetric(sparkContext, "avg read batch num rows"),
     "numInputRows" -> SQLMetrics.createMetric(sparkContext, "number of input rows"),
@@ -99,11 +100,11 @@ case class ColumnarShuffleExchangeExec(
     // check input datatype
     for (attr <- child.output) {
       try {
-        ConverterUtils.createArrowField(attr)
+        ConverterUtils.checkIfTypeSupported(attr.dataType)
       } catch {
         case e: UnsupportedOperationException =>
           throw new UnsupportedOperationException(
-            s"${attr.dataType} is not supported in ColumnarShuffleExchange")
+            s"${attr.dataType} is not supported in ColumnarShuffledExchangeExec.")
       }
     }
   }
@@ -144,7 +145,8 @@ case class ColumnarShuffleExchangeExec(
       longMetric("spillTime"),
       longMetric("peakMemoryAllocated"),
       longMetric("peakMemoryPreAllocated"),
-      longMetric("compressTime"))
+      longMetric("compressTime"),
+      longMetric("prepareTime"))
   }
 
   var cachedShuffleRDD: ShuffledColumnarBatchRDD = _
@@ -193,6 +195,7 @@ class ColumnarShuffleExchangeAdaptor(
     "peakMemoryAllocated" -> SQLMetrics.createSizeMetric(sparkContext, "peak memory allocated"),
     "peakMemoryPreAllocated" -> SQLMetrics.createSizeMetric(sparkContext, "peak memory pre allocated"),
     "compressTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_compress"),
+    "prepareTime" -> SQLMetrics.createNanoTimingMetric(sparkContext, "totaltime_prepare"),
     "avgReadBatchNumRows" -> SQLMetrics
       .createAverageMetric(sparkContext, "avg read batch num rows"),
     "numInputRows" -> SQLMetrics.createMetric(sparkContext, "number of input rows"),
@@ -245,7 +248,8 @@ class ColumnarShuffleExchangeAdaptor(
       longMetric("spillTime"),
       longMetric("peakMemoryAllocated"),
       longMetric("peakMemoryPreAllocated"),
-      longMetric("compressTime"))
+      longMetric("compressTime"),
+      longMetric("prepareTime"))
   }
 
   var cachedShuffleRDD: ShuffledColumnarBatchRDD = _
@@ -312,7 +316,8 @@ object ColumnarShuffleExchangeExec extends Logging {
       spillTime: SQLMetric,
       peakMemoryAllocated: SQLMetric,
       peakMemoryPreAllocated: SQLMetric,
-      compressTime: SQLMetric): ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
+      compressTime: SQLMetric,
+      prepareTime: SQLMetric): ShuffleDependency[Int, ColumnarBatch, ColumnarBatch] = {
     val arrowFields = outputAttributes.map(attr => ConverterUtils.createArrowField(attr))
     def serializeSchema(fields: Seq[Field]): Array[Byte] = {
       val schema = new Schema(fields.asJava)
@@ -460,7 +465,8 @@ object ColumnarShuffleExchangeExec extends Logging {
         spillTime = spillTime,
         peakMemoryAllocated = peakMemoryAllocated,
         peakMemoryPreAllocated = peakMemoryPreAllocated,
-        compressTime = compressTime)
+        compressTime = compressTime,
+        prepareTime = prepareTime)
 
     dependency
   }

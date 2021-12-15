@@ -828,10 +828,11 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
     }
   }
 
-  int64_t prealloc_row_cnt = options_.offheap_per_task >0 && size_per_row >0
-      ? options_.offheap_per_task / 4 / size_per_row / num_partitions_
-      : options_.buffer_size;
- 
+  int64_t prealloc_row_cnt =
+      options_.offheap_per_task > 0 && size_per_row > 0
+          ? options_.offheap_per_task / 4 / size_per_row / num_partitions_
+          : options_.buffer_size;
+
   // prepare partition buffers and spill on necessary
   uint64_t peak_memory_prealloc = 0;
   uint64_t peak_memory_alloc = 0;
@@ -841,10 +842,9 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
         partition_buffer_idx_base_[pid] + partition_id_cnt_[pid] >
             partition_buffer_size_[pid]) {
       // if the size to be filled + allready filled > the buffer size, need to allocate new buffer
-      auto new_size = std::min( (int32_t)prealloc_row_cnt, options_.buffer_size );
+      auto new_size = std::min((int32_t)prealloc_row_cnt, options_.buffer_size);
       // make sure the splitted record batch can be filled
-      if ( partition_id_cnt_[pid] > new_size )
-        new_size = partition_id_cnt_[pid];
+      if (partition_id_cnt_[pid] > new_size) new_size = partition_id_cnt_[pid];
       peak_memory_prealloc += new_size * size_per_row;
       if (options_.prefer_spill) {
         // if prefer_spill is set, cache current record batch
