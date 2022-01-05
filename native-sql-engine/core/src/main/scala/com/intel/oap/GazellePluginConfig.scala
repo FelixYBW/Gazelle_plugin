@@ -180,11 +180,17 @@ class GazellePluginConfig(conf: SQLConf) extends Logging {
   val columnarShufflePreferSpill: Boolean =
     conf.getConfString("spark.oap.sql.columnar.shuffle.preferSpill", "true").toBoolean
 
+  val columnarShuffleWriteSchema: Boolean =
+    conf.getConfString("spark.oap.sql.columnar.shuffle.writeSchema", "false").toBoolean
+
   // The supported customized compression codec is lz4 and fastpfor.
   val columnarShuffleUseCustomizedCompressionCodec: String =
     conf.getConfString("spark.oap.sql.columnar.shuffle.customizedCompression.codec", "lz4")
 
-  val shuffleSplitDefaultSize: Int = 
+  val columnarShuffleBatchCompressThreshold: Int =
+    conf.getConfString("spark.oap.sql.columnar.shuffle.batchCompressThreshold", "100").toInt
+
+  val shuffleSplitDefaultSize: Int =
     conf
       .getConfString("spark.oap.sql.columnar.shuffleSplitDefaultSize", "8192").toInt
 
