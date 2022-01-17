@@ -668,17 +668,17 @@ arrow::Status Splitter::CacheRecordBatch(int32_t partition_id, bool reset_buffer
     if (num_rows <= options_.batch_compress_threshold) {
       TIME_NANO_OR_RAISE(total_compress_time_,
                          arrow::ipc::GetRecordBatchPayload(
-                             *batch, tiny_bach_write_options_, payload.get()));
+                             *splitted_recordbatch_, tiny_bach_write_options_, payload.get()));
     } else {
       TIME_NANO_OR_RAISE(total_compress_time_,
                          arrow::ipc::GetRecordBatchPayload(
-                             *batch, options_.ipc_write_options, payload.get()));
+                             *splitted_recordbatch_, options_.ipc_write_options, payload.get()));
     }
     partition_cached_recordbatch_size_[partition_id] += payload->body_length;
+    total_compressed_bytes += payload->body_length;
 
     partition_cached_recordbatch_[partition_id].push_back(std::move(payload));
 
-#endif
     //reset the buffer base cnt
     partition_buffer_idx_base_[partition_id] = 0;
   }

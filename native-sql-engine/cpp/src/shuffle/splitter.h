@@ -86,6 +86,8 @@ class Splitter {
 
   int64_t TotalBytesWritten() const { return total_bytes_written_; }
 
+  int64_t TotalCompressedBytes() const {return total_compressed_bytes; }
+
   int64_t TotalBytesSpilled() const { return total_bytes_spilled_; }
 
   int64_t TotalWriteTime() const { return total_write_time_; }
@@ -226,7 +228,8 @@ class Splitter {
   int64_t total_compute_pid_time_ = 0;
   int64_t peak_memory_allocated_ = 0;
   int64_t peak_memory_preallocated_ = 0;
-
+  int64_t total_compressed_bytes = 0;
+  
   std::vector<int64_t> partition_lengths_;
   std::vector<int64_t> raw_partition_lengths_;
 
