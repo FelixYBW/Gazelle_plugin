@@ -179,9 +179,11 @@ class Splitter {
   std::vector<int32_t> partition_buffer_idx_offset_;
   std::vector<std::shared_ptr<PartitionWriter>> partition_writer_;
   std::vector<std::vector<uint8_t*>> partition_fixed_width_validity_addrs_;
+  std::vector<std::vector<uint32_t>> partition_fixed_width_validity_cnt_;
   std::vector<std::vector<uint8_t*>> partition_fixed_width_value_addrs_;
   std::vector<std::vector<std::vector<std::shared_ptr<arrow::ResizableBuffer>>>>
       partition_fixed_width_buffers_;
+  
   std::vector<std::vector<std::shared_ptr<arrow::BinaryBuilder>>>
       partition_binary_builders_;
   std::vector<std::vector<std::shared_ptr<arrow::LargeBinaryBuilder>>>
@@ -239,6 +241,10 @@ class Splitter {
 
   // shared by all partition writers
   std::shared_ptr<arrow::ipc::IpcPayload> schema_payload_;
+  
+  // shared by all splited recordbatch
+  std::shared_ptr<arrow::RecordBatch> splitted_recordbatch_;
+
 };
 
 class RoundRobinSplitter : public Splitter {
