@@ -283,7 +283,6 @@ arrow::Status Splitter::Init() {
   // the offset of each partition during record batch split
   partition_buffer_idx_offset_.resize(num_partitions_);
 
-
   partition_cached_recordbatch_.resize(num_partitions_);
   partition_cached_recordbatch_size_.resize(num_partitions_);
   partition_lengths_.resize(num_partitions_);
@@ -314,32 +313,40 @@ arrow::Status Splitter::Init() {
   }
 
   auto num_fixed_width = fixed_width_array_idx_.size();
+  auto num_binary_width = binary_array_idx_.size() + large_binary_array_idx_.size();
+
+  // fixed width buffer
   partition_fixed_width_validity_addrs_.resize(num_fixed_width);
   partition_fixed_width_value_addrs_.resize(num_fixed_width);
-  partition_fixed_width_buffers_.resize(num_fixed_width);
-  binary_array_empirical_size_.resize(binary_array_idx_.size());
+
+  partition_resiable_buffers_.resize(num_fixed_width + num_binary_width);
+
+  std::for_each(
+      partition_resiable_buffers_.begin(), partition_resiable_buffers_.end(),
+      [this](std::vector<std::vector<std::shared_ptr<arrow::ResizableBuffer>>>& buf) {
+    buf.resize(num_partitions_);});
+  
+  //binary buffer
   large_binary_array_empirical_size_.resize(large_binary_array_idx_.size());
+  binary_array_empirical_size_.resize(binary_array_idx_.size());
+  partition_array_offset_addrs_.resize(num_binary_width);
+  partition_array_validity_addrs_.resize(num_binary_width);
+  partition_array_value_addrs_.resize(num_binary_width);
+  partition_array_buffer_idx_base_.resize(num_binary_width);
+  
+
+
   input_fixed_width_has_null_.resize(num_fixed_width, false);
   for (auto i = 0; i < num_fixed_width; ++i) {
     partition_fixed_width_validity_addrs_[i].resize(num_partitions_);
     partition_fixed_width_value_addrs_[i].resize(num_partitions_);
-    partition_fixed_width_buffers_[i].resize(num_partitions_);
   }
-  partition_binary_builders_.resize(binary_array_idx_.size());
-  for (auto i = 0; i < binary_array_idx_.size(); ++i) {
-    partition_binary_builders_[i].resize(num_partitions_);
-  }
-  partition_large_binary_builders_.resize(large_binary_array_idx_.size());
-  for (auto i = 0; i < large_binary_array_idx_.size(); ++i) {
-    partition_large_binary_builders_[i].resize(num_partitions_);
-  }
-  partition_list_builders_.resize(list_array_idx_.size());
-  for (auto i = 0; i < list_array_idx_.size(); ++i) {
-    partition_list_builders_[i].resize(num_partitions_);
-  }
-  partition_large_list_builders_.resize(large_list_array_idx_.size());
-  for (auto i = 0; i < large_list_array_idx_.size(); ++i) {
-    partition_large_list_builders_[i].resize(num_partitions_);
+
+  for (auto i=0;i<num_binary_width;i++) {
+    partition_array_offset_addrs_[i].resize(num_partitions_);
+    partition_array_validity_addrs_[i].resize(num_partitions_);
+    partition_array_value_addrs_[i].resize(num_partitions_);
+    partition_array_buffer_idx_base_[i].resize(num_partitions_);
   }
 
   ARROW_ASSIGN_OR_RAISE(configured_dirs_, GetConfiguredLocalDirs());
@@ -471,43 +478,10 @@ arrow::Status Splitter::CacheRecordBatch(int32_t partition_id, bool reset_buffer
     auto num_rows = partition_buffer_idx_base_[partition_id];
     auto buffer_sizes = 0;
     std::vector<std::shared_ptr<arrow::Array>> arrays(num_fields);
+    size_t buf_idx_base = 0;
     for (int i = 0; i < num_fields; ++i) {
+      std::vector<std::shared_ptr<arrow::ResizableBuffer>> buffers;
       switch (column_type_id_[i]->id()) {
-        case arrow::BinaryType::type_id:
-        case arrow::StringType::type_id: {
-          auto& builder = partition_binary_builders_[binary_idx][partition_id];
-          if (reset_buffers) {
-            //reset buffer
-            RETURN_NOT_OK(builder->Finish(&arrays[i]));
-            builder->Reset();
-          } else {
-            //allocate the same size
-            auto data_size = builder->value_data_length();
-            RETURN_NOT_OK(builder->Finish(&arrays[i]));
-            builder->Reset();
-            RETURN_NOT_OK(builder->Reserve(num_rows));
-            RETURN_NOT_OK(builder->ReserveData(data_size));
-          }
-          binary_idx++;
-          break;
-        }
-        case arrow::LargeBinaryType::type_id:
-        case arrow::LargeStringType::type_id: {
-          auto& builder =
-              partition_large_binary_builders_[large_binary_idx][partition_id];
-          if (reset_buffers) {
-            RETURN_NOT_OK(builder->Finish(&arrays[i]));
-            builder->Reset();
-          } else {
-            auto data_size = builder->value_data_length();
-            RETURN_NOT_OK(builder->Finish(&arrays[i]));
-            builder->Reset();
-            RETURN_NOT_OK(builder->Reserve(num_rows));
-            RETURN_NOT_OK(builder->ReserveData(data_size));
-          }
-          large_binary_idx++;
-          break;
-        }
         case arrow::ListType::type_id: {
           auto& builder = partition_list_builders_[list_idx][partition_id];
           if (reset_buffers) {
@@ -539,8 +513,14 @@ arrow::Status Splitter::CacheRecordBatch(int32_t partition_id, bool reset_buffer
               arrow::null(), num_rows, {nullptr, nullptr}, num_rows));
           break;
         }
+        case arrow::LargeBinaryType::type_id:
+        case arrow::LargeStringType::type_id:
+          buf_idx_base += binary_array_idx_.size();
+        case arrow::BinaryType::type_id:
+        case arrow::StringType::type_id:
+          buf_idx_base += this->fixed_width_array_idx_.size();
         default: {
-          auto& buffers = partition_fixed_width_buffers_[fixed_width_idx][partition_id];
+          auto& buffers = partition_resiable_buffers_[fixed_width_idx][partition_id];
           if (reset_buffers) {
             arrays[i] = arrow::MakeArray(
                 arrow::ArrayData::Make(schema_->field(i)->type(), num_rows,
@@ -964,7 +944,7 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
     this->peak_memory_preallocated_ = peak_memory_prealloc;
   }
   if (peak_memory_alloc > this->peak_memory_allocated_) {
-    this->peak_memory_allocated_ = peak_memory_allocated_;
+    this->peak_memory_allocated_ = peak_memory_alloc;
   }
 
 #ifdef DEBUG

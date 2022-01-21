@@ -174,14 +174,35 @@ class Splitter {
 
   class PartitionWriter;
 
+  //[pid]
   std::vector<int32_t> partition_buffer_size_;
+  // start index for each partition when new record batch starts to split
   std::vector<int32_t> partition_buffer_idx_base_;
+  // the offset of each partition during record batch split
   std::vector<int32_t> partition_buffer_idx_offset_;
+
+
+  // 0~N: fixed width
+  // N~M: binary
+  // M~P: large binary
+  std::vector<std::vector<std::vector<std::shared_ptr<arrow::ResizableBuffer>>>>
+      partition_resiable_buffers_;
+
+
   std::vector<std::shared_ptr<PartitionWriter>> partition_writer_;
   std::vector<std::vector<uint8_t*>> partition_fixed_width_validity_addrs_;
   std::vector<std::vector<uint8_t*>> partition_fixed_width_value_addrs_;
-  std::vector<std::vector<std::vector<std::shared_ptr<arrow::ResizableBuffer>>>>
-      partition_fixed_width_buffers_;
+
+  //[col][pid]
+  std::vector<std::vector<uint8_t*>> partition_array_validity_addrs_;
+  std::vector<std::vector<uint8_t*>> partition_array_value_addrs_;
+  std::vector<std::vector<uint8_t*>> partition_array_offset_addrs_;
+  //value buffer offset [col][pid]
+  std::vector<std::vector<int32_t>> partition_array_buffer_idx_base_;
+
+
+
+
   std::vector<std::vector<std::shared_ptr<arrow::BinaryBuilder>>>
       partition_binary_builders_;
   std::vector<std::vector<std::shared_ptr<arrow::LargeBinaryBuilder>>>
@@ -193,6 +214,7 @@ class Splitter {
       partition_cached_recordbatch_;
   std::vector<int64_t> partition_cached_recordbatch_size_;  // in bytes
 
+  // pre-allocated buffer size for each partition, unit is row count
   std::vector<int32_t> fixed_width_array_idx_;
   std::vector<int32_t> binary_array_idx_;
   std::vector<int32_t> large_binary_array_idx_;
