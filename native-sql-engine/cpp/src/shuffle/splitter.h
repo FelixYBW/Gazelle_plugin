@@ -27,6 +27,7 @@
 
 #include <random>
 #include <utility>
+#include <boost/align/aligned_allocator.hpp>
 
 #include "shuffle/type.h"
 #include "shuffle/utils.h"
@@ -176,16 +177,52 @@ class Splitter {
 
   class PartitionWriter;
 
+  //[pid]
   std::vector<int32_t> partition_buffer_size_;
+  // start index for each partition when new record batch starts to split
   std::vector<int32_t> partition_buffer_idx_base_;
+  // the offset of each partition during record batch split
   std::vector<int32_t> partition_buffer_idx_offset_;
-  std::vector<std::shared_ptr<PartitionWriter>> partition_writer_;
-  std::vector<std::vector<uint8_t*>> partition_fixed_width_validity_addrs_;
-  std::vector<std::vector<uint32_t>> partition_fixed_width_validity_cnt_;
-  std::vector<std::vector<uint8_t*>> partition_fixed_width_value_addrs_;
+
+
+  //[col][pid][buffers]
   std::vector<std::vector<std::vector<std::shared_ptr<arrow::ResizableBuffer>>>>
-      partition_fixed_width_buffers_;
-  
+      partition_resiable_buffers_;
+
+
+  std::vector<std::shared_ptr<PartitionWriter>> partition_writer_;
+
+  template <typename T>
+  using aligned_vector = std::vector<T, boost::alignment::aligned_allocator<T, 16>>;
+
+  struct ValidityBuffer{
+    uint8_t* validity_addrs;    //8 bytes
+    uint32_t validity_cnt;      //4 bytes
+    uint32_t size;              //4 bytes
+  };
+
+  std::vector<aligned_vector<ValidityBuffer>> partition_validity_buffer_;
+
+  struct FixedBuffer{
+    uint8_t* value_addrs;       //8 bytes
+    uint32_t size;              //4 bytes
+    uint8_t padding[4];         //4 bytes
+  };
+
+  std::vector<aligned_vector<FixedBuffer>> partition_fixed_buffer_;
+
+  struct ArrayBuffer{
+    uint8_t* value_addrs;       //8 bytes
+    uint64_t value_addr_offset; //8 bytes
+    uint8_t* offset_addrs;      //8 bytes
+    uint32_t size;              //4 bytes
+    uint32_t col_idx;           //4 bytes
+  };
+  std::vector<aligned_vector<ArrayBuffer>> partition_array_buffer_;
+
+
+
+
   std::vector<std::vector<std::shared_ptr<arrow::BinaryBuilder>>>
       partition_binary_builders_;
   std::vector<std::vector<std::shared_ptr<arrow::LargeBinaryBuilder>>>
@@ -197,6 +234,7 @@ class Splitter {
       partition_cached_recordbatch_;
   std::vector<int64_t> partition_cached_recordbatch_size_;  // in bytes
 
+  // pre-allocated buffer size for each partition, unit is row count
   std::vector<int32_t> fixed_width_array_idx_;
   std::vector<int32_t> binary_array_idx_;
   std::vector<int32_t> large_binary_array_idx_;
@@ -205,7 +243,6 @@ class Splitter {
 
   bool empirical_size_calculated_ = false;
   std::vector<int32_t> binary_array_empirical_size_;
-  std::vector<int32_t> large_binary_array_empirical_size_;
 
   std::vector<bool> input_fixed_width_has_null_;
 
