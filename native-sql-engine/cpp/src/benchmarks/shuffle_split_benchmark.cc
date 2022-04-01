@@ -37,7 +37,7 @@ namespace sparkcolumnarplugin {
 namespace shuffle {
 
 std::vector<std::string> input_files;
-const int num_partitions = 3456;
+const int num_partitions = 4096;
 const int batch_buffer_size = 32768;
 const int split_buffer_size = 8192;
 
@@ -170,7 +170,7 @@ class BenchmarkShuffleSplit : public ::testing::Test {
     int64_t split_time = 0;
 
     std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
-    while(1)
+    //while(1)
     {
       ASSERT_NOT_OK(parquet_reader->GetRecordBatchReader(row_group_indices, column_indices,
                                                     &record_batch_reader));
@@ -184,7 +184,7 @@ class BenchmarkShuffleSplit : public ::testing::Test {
           num_rows += record_batch->num_rows();
         }
       } while (record_batch);
-      batches.clear();
+    //  batches.clear();
     }
     
     std::cout << "parse parquet done elapsed time = " << TIME_NANO_TO_STRING(total_read_elapsed) << std::endl;

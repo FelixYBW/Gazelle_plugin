@@ -936,8 +936,8 @@ arrow::Status Splitter::SplitFixedWidthValueBuffer(const arrow::RecordBatch& rb)
         /*_mm_prefetch(&dst_addrs[nextpid], _MM_HINT_T0);*/                               \
         auto dst_offset = partition_buffer_idx_offset_[pid];                          \
         auto dst_pid_base = reinterpret_cast<_CTYPE*>(dst_addrs[pid]);                \
-        /*_mm_prefetch(&src_addr[row+128], _MM_HINT_T0); */                                \
         dst_pid_base[dst_offset] = reinterpret_cast<_CTYPE*>(src_addr)[row];          \
+        _mm_prefetch(&src_addr[row+8], _MM_HINT_T0);                                 \
         partition_buffer_idx_offset_[pid]++;                                          \
         _mm_prefetch(&dst_pid_base[dst_offset + 1], _MM_HINT_T0);                     \
       }                                                                               \
@@ -1400,7 +1400,7 @@ arrow::Status RoundRobinSplitter::ComputeAndCountPartitionId(
   for (auto& pid : partition_id_) {
     pid = pid_selection_;
     partition_id_cnt_[pid_selection_]++;
-    pid_selection_ = (pid_selection_ + 1) % num_partitions_;
+    pid_selection_ = (pid_selection_ + 1) == num_partitions_ ? 0: (pid_selection_ + 1);
   }
   return arrow::Status::OK();
 }
