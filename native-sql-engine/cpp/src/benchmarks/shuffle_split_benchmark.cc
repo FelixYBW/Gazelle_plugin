@@ -37,7 +37,7 @@ namespace sparkcolumnarplugin {
 namespace shuffle {
 
 std::vector<std::string> input_files;
-const int num_partitions = 512;
+const int num_partitions = 4096;
 const int batch_buffer_size = 32768;
 const int split_buffer_size = 8192;
 
