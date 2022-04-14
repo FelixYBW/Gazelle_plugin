@@ -183,7 +183,7 @@ class Splitter {
   // col partid
   std::vector<std::vector<uint8_t*>> partition_fixed_width_value_addrs_;
   // col partid
-  std::vector<std::vector<std::vector<std::shared_ptr<arrow::ResizableBuffer>>>>
+  std::vector<std::vector<std::vector<std::shared_ptr<arrow::Buffer>>>>
       partition_fixed_width_buffers_;
   // col partid
   std::vector<std::vector<std::shared_ptr<arrow::BinaryBuilder>>>
