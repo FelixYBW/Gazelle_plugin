@@ -225,6 +225,8 @@ class Splitter {
   // updated for each input record batch
   // col
   std::vector<int32_t> partition_id_;
+  // [num_rows]
+  std::vector<std::vector<uint32_t>> reducer_offsets_;
   // col
   std::vector<int32_t> partition_id_cnt_;
 
