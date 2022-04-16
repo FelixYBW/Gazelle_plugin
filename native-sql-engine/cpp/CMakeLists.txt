@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(spark_columnar_plugin)
 
-add_definitions(-DSKIPWRITE -DSKIPCOMPRESS)
+add_definitions(-DSKIPWRITE -DSKIPCOMPRESS -DPROCESSROW)
+#add_definitions(-DSKIPWRITE -DSKIPCOMPRESS)
 add_compile_options(-g)
 
 set(root_directory ${PROJECT_BINARY_DIR})
