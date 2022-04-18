@@ -970,17 +970,17 @@ arrow::Status Splitter::SplitFixedWidthValueBuffer(const arrow::RecordBatch& rb)
           [](uint8_t* x, int16_t y) { return x+y*sizeof(_CTYPE); });                           \
         for (auto pid = 0; pid < num_partitions_; pid++)                                       \
         {                                                                                      \
-          auto dst_pid_base = reinterpret_cast<_CTYPE*>(partition_buffer_idx_offset_[pid]);  /*32k*/  \
-          auto r = reducer_offset_offset_[pid];                                               /*32k*/  \
-          auto size = reducer_offset_offset_[pid+1];\
-          for (r; r<size; r++)                                       \
+          auto dst_pid_base = reinterpret_cast<_CTYPE*>(partition_buffer_idx_offset_[pid]); /*32k*/  \
+          auto r = reducer_offset_offset_[pid];                                        /*8k*/  \
+          auto size = reducer_offset_offset_[pid+1];                                           \
+          for (r; r<size; r++)                                                                 \
           {                                                                                    \
-            auto src_offset = reducer_offsets_[r];                                                  /*16k*/     \
-            *dst_pid_base = reinterpret_cast<_CTYPE*>(src_addr)[src_offset];                   \
-            _mm_prefetch(&src_addr[src_offset+1], _MM_HINT_T0);                                           \
+            auto src_offset = reducer_offsets_[r];                                 /*16k*/     \
+            *dst_pid_base = reinterpret_cast<_CTYPE*>(src_addr)[src_offset];       /*64k*/     \
+            _mm_prefetch(&reinterpret_cast<_CTYPE*>(src_addr)[src_offset], _MM_HINT_T0);                                \
             dst_pid_base+=1;                                                                   \
           }                                                                                    \
-        }                                                                             \
+        }                                                                                      \
         break;
 #else        
 #define PROCESS(_CTYPE)                                                                        \
