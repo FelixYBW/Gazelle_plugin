@@ -293,6 +293,7 @@ arrow::Status Splitter::Init() {
   partition_cached_recordbatch_size_.resize(num_partitions_);
   partition_lengths_.resize(num_partitions_);
   raw_partition_lengths_.resize(num_partitions_);
+  reducer_offset_offset_.resize(num_partitions_+1);
 
   for (int i = 0; i < column_type_id_.size(); ++i) {
     switch (column_type_id_[i]->id()) {
@@ -815,6 +816,28 @@ arrow::Result<int32_t> Splitter::SpillLargestPartition(int64_t* size) {
 }
 
 arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
+
+#ifdef PROCESSROW
+
+  reducer_offsets_.resize(rb.num_rows());
+
+  reducer_offset_offset_[0]=0;
+  for(auto pid=1;pid<=num_partitions_;pid++)
+  {
+    reducer_offset_offset_[pid]=reducer_offset_offset_[pid-1]+partition_id_cnt_[pid-1];
+  }
+  for(auto row=0;row<rb.num_rows();row++)
+  {
+    auto pid=partition_id_[row];
+    reducer_offsets_[reducer_offset_offset_[pid]]=row;
+    _mm_prefetch(reducer_offsets_.data()+reducer_offset_offset_[pid]+32,_MM_HINT_T0);
+    reducer_offset_offset_[pid]++;
+  }
+  std::transform(reducer_offset_offset_.begin(), std::prev(reducer_offset_offset_.end()), 
+      partition_id_cnt_.begin(), reducer_offset_offset_.begin(),
+      [](uint16_t x, int16_t y) { return x-y; });
+
+#endif  
   // for the first input record batch, scan binary arrays and large binary
   // arrays to get their empirical sizes
 
@@ -922,15 +945,41 @@ arrow::Status Splitter::SplitFixedWidthValueBuffer(const arrow::RecordBatch& rb)
     auto src_addr = const_cast<uint8_t*>(rb.column_data(col_idx)->buffers[1]->data());
 
     switch (arrow::bit_width(column_type_id_[col_idx]->id())) {
+#ifdef PROCESSROW
+//#if 0
+// assume batch size = 32k; reducer# = 4K; row/reducer = 8
+#define PROCESS(_CTYPE)                                                                        \
+      std::transform(partition_buffer_idx_offset_.begin(), partition_buffer_idx_offset_.end(), \
+          partition_buffer_idx_base_.begin(), partition_buffer_idx_offset_.begin(),            \
+          [](uint8_t* x, int16_t y) { return x+y*sizeof(_CTYPE); });                           \
+        for (auto pid = 0; pid < num_partitions_; pid++)                                       \
+        {                                                                                      \
+          auto dst_pid_base = reinterpret_cast<_CTYPE*>(partition_buffer_idx_offset_[pid]); /*32k*/  \
+          auto r = reducer_offset_offset_[pid];                                        /*8k*/  \
+          auto size = reducer_offset_offset_[pid+1];                                           \
+          for (r; r<size; r++)                                                                 \
+          {                                                                                    \
+            auto src_offset = reducer_offsets_[r];                                 /*16k*/     \
+            *dst_pid_base = reinterpret_cast<_CTYPE*>(src_addr)[src_offset];       /*64k*/     \
+            _mm_prefetch(&(src_addr)[src_offset*sizeof(_CTYPE)+64], _MM_HINT_T2);                                \
+            dst_pid_base+=1;                                                                   \
+          }                                                                                    \
+        }                                                                                      \
+        break;
+#else        
 #define PROCESS(_CTYPE)                                                               \
-  for (row = 0; row < num_rows; ++row) {                                              \
-    auto pid = partition_id_[row];                                                    \
-    auto dst_pid_base = reinterpret_cast<_CTYPE*>(partition_buffer_idx_offset_[pid]); \
-    *dst_pid_base = reinterpret_cast<_CTYPE*>(src_addr)[row];                         \
-    partition_buffer_idx_offset_[pid] += sizeof(_CTYPE);                              \
-    _mm_prefetch(&dst_pid_base[1], _MM_HINT_T0);                                      \
-  }                                                                                   \
-  break;
+      std::transform(partition_buffer_idx_offset_.begin(), partition_buffer_idx_offset_.end(), \
+          partition_buffer_idx_base_.begin(), partition_buffer_idx_offset_.begin(),            \
+          [](uint8_t* x, int16_t y) { return x+y*sizeof(_CTYPE); });                           \
+      for (row = 0; row < num_rows; ++row) {                                              \
+        auto pid = partition_id_[row];                                                    \
+        auto dst_pid_base = reinterpret_cast<_CTYPE*>(partition_buffer_idx_offset_[pid]); \
+          *dst_pid_base = reinterpret_cast<_CTYPE*>(src_addr)[row];                         \
+        partition_buffer_idx_offset_[pid]+=sizeof(_CTYPE);                              \
+        _mm_prefetch(&dst_pid_base[64/sizeof(_CTYPE)], _MM_HINT_T0);                                          \
+      }                                                                                   \
+      break;
+#endif
       case 8:
         PROCESS(uint8_t)
       case 16:
