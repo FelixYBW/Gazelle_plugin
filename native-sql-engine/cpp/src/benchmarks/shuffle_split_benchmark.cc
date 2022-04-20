@@ -165,7 +165,8 @@ BENCHMARK_DEFINE_F(BenchmarkShuffleSplit, CacheScan)(benchmark::State& state) {
       num_rows += record_batch->num_rows();
     }
   } while (record_batch);
-
+  std::cout << "parquet parse done " << std::endl;
+  
   for (auto _ : state) {
     for_each(batches.begin(), batches.end(),
              [&splitter, &split_time](std::shared_ptr<arrow::RecordBatch>& record_batch) {
@@ -370,10 +371,10 @@ BENCHMARK_DEFINE_F(BenchmarkShuffleSplit, IterateScan)(benchmark::State& state) 
       ->Threads(16)
       ->Threads(24)
       ->Unit(benchmark::kSecond);*/
-BENCHMARK_REGISTER_F(BenchmarkShuffleSplit, IterateScan)
-    ->Iterations(1)
-    ->Args({96 * 16, arrow::Compression::FASTPFOR})
-    ->Threads(24)
+BENCHMARK_REGISTER_F(BenchmarkShuffleSplit, CacheScan)
+    ->Iterations(1000000)
+    ->Args({512, arrow::Compression::FASTPFOR})
+    ->Threads(1)
     ->ReportAggregatesOnly(false)
     ->MeasureProcessCPUTime()
     ->Unit(benchmark::kSecond);

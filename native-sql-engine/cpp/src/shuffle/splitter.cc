@@ -28,19 +28,44 @@
 
 #include <memory>
 #include <utility>
+#include <string>
+#include <cstring>
+#include <sstream>
 
 #include "shuffle/utils.h"
 #include "utils/macros.h"
+#include <immintrin.h>
 
-#if defined(COLUMNAR_PLUGIN_USE_AVX512)
+/*#if defined(COLUMNAR_PLUGIN_USE_AVX512)
 #include <immintrin.h>
 #else
 #include <xmmintrin.h>
 #endif
+*/
 
 namespace sparkcolumnarplugin {
 namespace shuffle {
 using arrow::internal::checked_cast;
+
+
+
+
+template <typename T>
+std::string __m128i_toString(const __m128i var) {
+    std::stringstream sstr;
+    T values[16/sizeof(T)];
+    std::memcpy(values,&var,sizeof(values)); //See discussion below
+    if (sizeof(T) == 1) {
+        for (unsigned int i = 0; i < sizeof(__m128i); i++) { //C++11: Range for also possible
+            sstr << std::hex << (int) values[i] << " " << std::dec;
+        }
+    } else {
+        for (unsigned int i = 0; i < sizeof(__m128i) / sizeof(T); i++) { //C++11: Range for also possible
+            sstr << std::hex << values[i] << " " << std::dec;
+        }
+    }
+    return sstr.str();
+}
 
 SplitOptions SplitOptions::Defaults() { return SplitOptions(); }
 #if defined(COLUMNAR_PLUGIN_USE_AVX512)
@@ -985,7 +1010,76 @@ arrow::Status Splitter::SplitFixedWidthValueBuffer(const arrow::RecordBatch& rb)
       case 32:
         PROCESS(uint32_t)
       case 64:
+#ifdef PROCESSROW
+      std::transform(partition_buffer_idx_offset_.begin(), partition_buffer_idx_offset_.end(), 
+          partition_buffer_idx_base_.begin(), partition_buffer_idx_offset_.begin(),            
+          [](uint8_t* x, int16_t y) { return x+y*sizeof(uint64_t); });                           
+        for (auto pid = 0; pid < num_partitions_; pid++)                                       
+        {                                                                                      
+          auto dst_pid_base = reinterpret_cast<uint64_t*>(partition_buffer_idx_offset_[pid]); /*32k*/  
+          auto r = reducer_offset_offset_[pid];                                        /*8k*/  
+          auto size = reducer_offset_offset_[pid+1];                                           
+#if 1
+          for (r; r<size && (((uint64_t)dst_pid_base & 0x1f) > 0); r++)                          
+          {                                                                                    
+            auto src_offset = reducer_offsets_[r];                                 /*16k*/     
+            *dst_pid_base = reinterpret_cast<uint64_t*>(src_addr)[src_offset];       /*64k*/     
+            _mm_prefetch(&(src_addr)[src_offset*sizeof(uint64_t)+64], _MM_HINT_T2);              
+            dst_pid_base+=1;                                                                   
+          }                                                                                    
+#if 0
+          for (r; r+4<size; r+=4)                              
+          {                                                                                    
+            auto src_offset = reducer_offsets_[r];                                 /*16k*/     
+            __m128i src_offset_2x = _mm_cvtepu16_epi32(((__m128i*)(reducer_offsets_.data())+r));
+            src_offset_2x = _mm_shufflelo_epi16(src_offset_2x,0x98);
+            auto src_tmp = reinterpret_cast<uint64_t*>(src_addr)[src_offset];
+            src_tmp = reinterpret_cast<uint64_t*>(src_addr)[reducer_offsets_[r+1]];
+            __m128i src_2x;
+            src_2x = _mm_insert_epi64(src_2x,src_tmp,0);
+            src_2x = _mm_insert_epi64(src_2x,src_tmp,1);
+            
+            /*__m128i src_2x = _mm_i32gather_epi64((const long long int*)src_addr,src_offset_2x,1);*/            
+            _mm_store_si128((__m128i*)dst_pid_base,src_2x); 
+            /*_mm_stream_si128((__m128i*)dst_pid_base,src_2x); */
+                                                         
+            _mm_prefetch(&(src_addr)[src_offset*sizeof(uint64_t)+64], _MM_HINT_T2);              
+            _mm_prefetch(&(src_addr)[src_offset*sizeof(uint64_t)+128], _MM_HINT_T2);              
+            dst_pid_base+=2;                                                                   
+          }    
+#endif
+          for (r; r+2<size; r+=2)                              
+          {                                                                                    
+            auto src_offset = reducer_offsets_[r];                                 /*16k*/     
+            __m128i src_offset_2x = _mm_cvtsi32_si128(*((int32_t*)(reducer_offsets_.data()+r)));
+            src_offset_2x = _mm_shufflelo_epi16(src_offset_2x,0x98);
+            auto src_tmp = reinterpret_cast<uint64_t*>(src_addr)[src_offset];
+            auto src_tmp1 = reinterpret_cast<uint64_t*>(src_addr)[reducer_offsets_[r+1]];
+            __m128i src_2x;
+            src_2x = _mm_insert_epi64(src_2x,src_tmp,0);
+            src_2x = _mm_insert_epi64(src_2x,src_tmp1,1);
+            
+            //__m128i src_2x = _mm_i32gather_epi64((const long long int*)src_addr,src_offset_2x,8);
+            /*_mm_store_si128((__m128i*)dst_pid_base,src_2x); */
+            _mm_stream_si128((__m128i*)dst_pid_base,src_2x); 
+                                                         
+            _mm_prefetch(&(src_addr)[src_offset*sizeof(uint64_t)+64], _MM_HINT_T2);              
+            _mm_prefetch(&(src_addr)[src_offset*sizeof(uint64_t)+128], _MM_HINT_T2);              
+            dst_pid_base+=2;                                                                   
+          }    
+#endif                                                                                
+          for (r; r<size; r++)                                                                 
+          {                                                                                    
+            auto src_offset = reducer_offsets_[r];                                 /*16k*/     
+            *dst_pid_base = reinterpret_cast<uint64_t*>(src_addr)[src_offset];       /*64k*/     
+            _mm_prefetch(&(src_addr)[src_offset*sizeof(uint64_t)+64], _MM_HINT_T2);              
+            dst_pid_base+=1;                                                                   
+          }                                                                                    
+        }                                                                                      
+        break;
+#else
         PROCESS(uint64_t)
+#endif
 #undef PROCESS
       case 128:  // arrow::Decimal128Type::type_id
 #ifdef PROCESSROW
