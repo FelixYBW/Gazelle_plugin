@@ -18,16 +18,18 @@
 #include "operators/columnar_to_row_converter.h"
 
 #include <iostream>
+#include <immintrin.h>
 
 namespace sparkcolumnarplugin {
 namespace columnartorow {
 
-int64_t CalculateBitSetWidthInBytes(int32_t numFields) {
+inline int64_t CalculateBitSetWidthInBytes(int32_t numFields) {
   return ((numFields + 63) >> 6) << 3;
 }
 
-int64_t RoundNumberOfBytesToNearestWord(int64_t numBytes) {
+inline int64_t RoundNumberOfBytesToNearestWord(int64_t numBytes) {
   int64_t remainder = numBytes & 0x07;  // This is equivalent to `numBytes % 8`
+  
   if (remainder == 0) {
     return numBytes;
   } else {
@@ -54,7 +56,7 @@ int64_t CalculatedFixeSizePerRow(std::shared_ptr<arrow::Schema> schema,
   return fixed_size + decimal_cols_size;
 }
 
-int32_t CalculateHeaderPortionInBytes(int32_t num_elements) {
+inline int32_t CalculateHeaderPortionInBytes(int32_t num_elements) {
   return 8 + ((num_elements + 63) / 64) * 8;
 }
 
@@ -192,7 +194,7 @@ arrow::Status ColumnarToRowConverter::Init() {
   return arrow::Status::OK();
 }
 
-void BitSet(uint8_t* buffer_address, int32_t index) {
+inline void BitSet(uint8_t* buffer_address, int32_t index) {
   int64_t mask = 1L << (index & 0x3f);  // mod 64 and shift
   int64_t wordOffset = (index >> 6) * 8;
   int64_t word;
@@ -201,11 +203,11 @@ void BitSet(uint8_t* buffer_address, int32_t index) {
   memcpy(buffer_address + wordOffset, &value, sizeof(int64_t));
 }
 
-int64_t GetFieldOffset(int64_t nullBitsetWidthInBytes, int32_t index) {
+inline int64_t GetFieldOffset(int64_t nullBitsetWidthInBytes, int32_t index) {
   return nullBitsetWidthInBytes + 8L * index;
 }
 
-void SetNullAt(uint8_t* buffer_address, int64_t row_offset, int64_t field_offset,
+inline void SetNullAt(uint8_t* buffer_address, int64_t row_offset, int64_t field_offset,
                int32_t col_index) {
   BitSet(buffer_address + row_offset, col_index);
   // set the value to 0
@@ -213,7 +215,7 @@ void SetNullAt(uint8_t* buffer_address, int64_t row_offset, int64_t field_offset
   return;
 }
 
-int32_t FirstNonzeroLongNum(std::vector<int32_t> mag, int32_t length) {
+inline int32_t FirstNonzeroLongNum(std::vector<int32_t> mag, int32_t length) {
   int32_t fn = 0;
   int32_t i;
   for (i = length - 1; i >= 0 && mag[i] == 0; i--)
@@ -222,7 +224,7 @@ int32_t FirstNonzeroLongNum(std::vector<int32_t> mag, int32_t length) {
   return fn;
 }
 
-int32_t GetInt(int32_t n, int32_t sig, std::vector<int32_t> mag, int32_t length) {
+inline int32_t GetInt(int32_t n, int32_t sig, std::vector<int32_t> mag, int32_t length) {
   if (n < 0) return 0;
   if (n >= length) return sig < 0 ? -1 : 0;
 
@@ -231,7 +233,7 @@ int32_t GetInt(int32_t n, int32_t sig, std::vector<int32_t> mag, int32_t length)
                    : (n <= FirstNonzeroLongNum(mag, length) ? -magInt : ~magInt));
 }
 
-int32_t GetNumberOfLeadingZeros(uint32_t i) {
+inline int32_t GetNumberOfLeadingZeros(uint32_t i) {
   // HD, Figure 5-6
   if (i == 0) return 32;
   int32_t n = 1;
@@ -255,9 +257,9 @@ int32_t GetNumberOfLeadingZeros(uint32_t i) {
   return n;
 }
 
-int32_t GetBitLengthForInt(uint32_t n) { return 32 - GetNumberOfLeadingZeros(n); }
+inline int32_t GetBitLengthForInt(uint32_t n) { return 32 - GetNumberOfLeadingZeros(n); }
 
-int32_t GetBitCount(uint32_t i) {
+inline int32_t GetBitCount(uint32_t i) {
   // HD, Figure 5-2
   i = i - ((i >> 1) & 0x55555555);
   i = (i & 0x33333333) + ((i >> 2) & 0x33333333);
@@ -267,7 +269,7 @@ int32_t GetBitCount(uint32_t i) {
   return i & 0x3f;
 }
 
-int32_t GetBitLength(int32_t sig, std::vector<int32_t> mag, int32_t len) {
+inline int32_t GetBitLength(int32_t sig, std::vector<int32_t> mag, int32_t len) {
   int32_t n = -1;
   if (len == 0) {
     n = 0;
@@ -707,6 +709,7 @@ arrow::Status WriteValue(uint8_t* buffer_address, int64_t field_offset,
           auto value = numeric_array->Value(i);                                      \
           memcpy(buffer_address + offsets[i] + field_offset, &value, BYTES);           \
         }                                                                           \
+        _mm_prefetch(buffer_address, _MM_HINT_T2);                           \
       }                                                                      \
       break;                                                                  \
     }
