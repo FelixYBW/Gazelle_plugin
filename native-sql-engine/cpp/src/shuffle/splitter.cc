@@ -1035,8 +1035,8 @@ arrow::Status Splitter::SplitFixedWidthValueBuffer(const arrow::RecordBatch& rb)
             __m128i src_offset_4x = _mm_cvtepu16_epi32(src_ld);
             
             __m256i src_4x = _mm256_i32gather_epi64((const long long int*)src_addr,src_offset_4x,8);
-            _mm256_store_si256((__m256i*)dst_pid_base,src_4x); 
-            /*_mm_stream_si128((__m128i*)dst_pid_base,src_2x); */
+            //_mm256_store_si256((__m256i*)dst_pid_base,src_4x); 
+            _mm_stream_si128((__m128i*)dst_pid_base,src_2x);
                                                          
             _mm_prefetch(&(src_addr)[(uint32_t)reducer_offsets_[r]*sizeof(uint64_t)+64], _MM_HINT_T2);              
             _mm_prefetch(&(src_addr)[(uint32_t)reducer_offsets_[r+1]*sizeof(uint64_t)+64], _MM_HINT_T2);              
@@ -1051,8 +1051,8 @@ arrow::Status Splitter::SplitFixedWidthValueBuffer(const arrow::RecordBatch& rb)
             src_offset_2x = _mm_shufflelo_epi16(src_offset_2x,0x98);
 
             __m128i src_2x = _mm_i32gather_epi64((const long long int*)src_addr,src_offset_2x,8);
-            //_mm_store_si128((__m128i*)dst_pid_base,src_2x); 
-            _mm_stream_si128((__m128i*)dst_pid_base,src_2x); 
+            _mm_store_si128((__m128i*)dst_pid_base,src_2x); 
+            //_mm_stream_si128((__m128i*)dst_pid_base,src_2x); 
                                                          
             _mm_prefetch(&(src_addr)[(uint32_t)reducer_offsets_[r]*sizeof(uint64_t)+64], _MM_HINT_T2);              
             _mm_prefetch(&(src_addr)[(uint32_t)reducer_offsets_[r+1]*sizeof(uint64_t)+64], _MM_HINT_T2);              

@@ -384,6 +384,30 @@ int main(int argc, char** argv) {
     ->MeasureProcessCPUTime()
     ->Unit(benchmark::kSecond);
 
+/*  sparkcolumnarplugin::shuffle::BenchmarkShuffleSplit_IterateScan_Benchmark bck(datafile);
+
+  benchmark::RegisterBenchmark("BenchmarkShuffleSplit::IterateScan", bck)
+    ->Iterations(1)
+      ->Args({96*2, arrow::Compression::FASTPFOR})
+      ->Args({96*4, arrow::Compression::FASTPFOR})
+      ->Args({96*8, arrow::Compression::FASTPFOR})
+      ->Args({96*16, arrow::Compression::FASTPFOR})
+      ->Args({96*32, arrow::Compression::FASTPFOR})
+      ->Threads(24)
+      ->Unit(benchmark::kSecond);
+
+  benchmark::RegisterBenchmark("BenchmarkShuffleSplit::IterateScan", bck)
+    ->Iterations(1)
+      ->Args({4096, arrow::Compression::FASTPFOR})
+      ->Threads(1)
+      ->Threads(2)
+      ->Threads(4)
+      ->Threads(8)
+      ->Threads(16)
+      ->Threads(24)
+      ->Unit(benchmark::kSecond);
+*/
+
   benchmark::Initialize(&argc, argv);
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
