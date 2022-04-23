@@ -25,6 +25,9 @@
 #include <arrow/type.h>
 #include <arrow/util/bit_util.h>
 
+#include <boost/align.hpp>
+
+
 #include "gandiva/decimal_type_util.h"
 
 namespace sparkcolumnarplugin {
@@ -41,7 +44,7 @@ class ColumnarToRowConverter {
 
   uint8_t* GetBufferAddress() { return buffer_address_; }
   const std::vector<int32_t>& GetOffsets() { return offsets_; }
-  const std::vector<int32_t>& GetLengths() { return lengths_; }
+  const std::vector<int32_t, boost::alignment::aligned_allocator<int32_t, 32>>& GetLengths() { return lengths_; }
 
  protected:
   std::vector<int32_t> buffer_cursor_;
@@ -53,7 +56,7 @@ class ColumnarToRowConverter {
   int32_t num_rows_;
   uint8_t* buffer_address_;
   std::vector<int32_t> offsets_;
-  std::vector<int32_t> lengths_;
+  std::vector<int32_t, boost::alignment::aligned_allocator<int32_t, 32>> lengths_;
 };
 
 }  // namespace columnartorow
