@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <sys/mman.h>
+
 #include <arrow/memory_pool.h>
 #include <jemalloc/jemalloc.h>
 
@@ -39,6 +41,7 @@ class ARROW_EXPORT LargePageMemoryPool : public MemoryPool {
     if (*out == NULL) {
       return Status::OutOfMemory("malloc of size ", size, " failed");
     }
+    madvise(*out, size, /*MADV_HUGEPAGE */ 14);
     return Status::OK();
 #else
     return pool_->Allocate(size, out);
@@ -58,6 +61,7 @@ class ARROW_EXPORT LargePageMemoryPool : public MemoryPool {
       *ptr = previous_ptr;
       return Status::OutOfMemory("realloc of size ", new_size, " failed");
     }
+    madvise(*ptr, size, /*MADV_HUGEPAGE */ 14);
     return Status::OK();
 #else
     return pool_->Reallocate(old_size, new_size, ptr);
