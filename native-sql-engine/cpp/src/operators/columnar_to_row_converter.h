@@ -40,20 +40,20 @@ class ColumnarToRowConverter {
   arrow::Status Write();
 
   uint8_t* GetBufferAddress() { return buffer_address_; }
-  const std::vector<int64_t>& GetOffsets() { return offsets_; }
-  const std::vector<int64_t>& GetLengths() { return lengths_; }
+  const std::vector<int32_t>& GetOffsets() { return offsets_; }
+  const std::vector<int32_t>& GetLengths() { return lengths_; }
 
  protected:
-  std::vector<int64_t> buffer_cursor_;
+  std::vector<int32_t> buffer_cursor_;
   std::shared_ptr<arrow::RecordBatch> rb_;
   std::shared_ptr<arrow::Buffer> buffer_;
   arrow::MemoryPool* memory_pool_ = arrow::default_memory_pool();
-  int64_t nullBitsetWidthInBytes_;
-  int64_t num_cols_;
-  int64_t num_rows_;
+  int32_t nullBitsetWidthInBytes_;
+  int32_t num_cols_;
+  int32_t num_rows_;
   uint8_t* buffer_address_;
-  std::vector<int64_t> offsets_;
-  std::vector<int64_t> lengths_;
+  std::vector<int32_t> offsets_;
+  std::vector<int32_t> lengths_;
 };
 
 }  // namespace columnartorow

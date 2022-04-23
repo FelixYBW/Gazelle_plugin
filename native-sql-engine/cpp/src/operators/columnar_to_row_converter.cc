@@ -23,12 +23,15 @@
 namespace sparkcolumnarplugin {
 namespace columnartorow {
 
+uint32_t x_7[8] __attribute__ ((aligned (32))) = {0x7,0x7,0x7,0x7,0x7,0x7,0x7,0x7};
+uint32_t x_8[8] __attribute__ ((aligned (32))) = {0x8,0x8,0x8,0x8,0x8,0x8,0x8,0x8};
+
 inline int64_t CalculateBitSetWidthInBytes(int32_t numFields) {
   return ((numFields + 63) >> 6) << 3;
 }
 
-inline int64_t RoundNumberOfBytesToNearestWord(int64_t numBytes) {
-  int64_t remainder = numBytes & 0x07;  // This is equivalent to `numBytes % 8`
+inline int32_t RoundNumberOfBytesToNearestWord(int32_t numBytes) {
+  int32_t remainder = numBytes & 0x07;  // This is equivalent to `numBytes % 8`
   
   return numBytes + ((8 - remainder) & 0x7);
   /*if (remainder == 0) {
@@ -106,17 +109,13 @@ arrow::Status ColumnarToRowConverter::Init() {
   // Calculate the initial size
   nullBitsetWidthInBytes_ = CalculateBitSetWidthInBytes(num_cols_);
 
-  int64_t fixed_size_per_row = CalculatedFixeSizePerRow(rb_->schema(), num_cols_);
+  int32_t fixed_size_per_row = CalculatedFixeSizePerRow(rb_->schema(), num_cols_);
 
   // Initialize the offsets_ , lengths_, buffer_cursor_
-  lengths_.resize(num_rows_);
-  offsets_.resize(num_rows_);
-  buffer_cursor_.resize(num_rows_);
-  for (auto i = 0; i < num_rows_; i++) {
-    lengths_[i] = fixed_size_per_row;
-    offsets_[i] = 0;
-    buffer_cursor_[i] = nullBitsetWidthInBytes_ + 8 * num_cols_;
-  }
+  lengths_.resize(num_rows_,fixed_size_per_row);
+  offsets_.resize(num_rows_, 0);
+  buffer_cursor_.resize(num_rows_, nullBitsetWidthInBytes_ + 8 * num_cols_);
+  
   // Calculated the lengths_
   for (auto i = 0; i < num_cols_; i++) {
     auto array = rb_->column(i);
@@ -124,9 +123,39 @@ arrow::Status ColumnarToRowConverter::Init() {
       auto binary_array = std::static_pointer_cast<arrow::BinaryArray>(array);
       using offset_type = typename arrow::BinaryType::offset_type;
       offset_type length;
-      for (auto j = 0; j < num_rows_; j++) {
-        auto value = binary_array->GetValue(j, &length);
-        lengths_[j] += RoundNumberOfBytesToNearestWord(length);
+      const offset_type* offsetarray = binary_array->raw_value_offsets();
+      __m256i x7_8x = _mm256_load_si256((__m256i*)x_7);
+      __m256i x8_8x = _mm256_load_si256((__m256i*)x_8);
+      int32_t j=0;
+      int32_t* length_data = lengths_.data();
+      for (j; j < num_rows_ && (((uint64_t)length_data & 0x1f)!=0); j++) {
+
+        offset_type length = offsetarray[j+1] - offsetarray[j];
+        *length_data += RoundNumberOfBytesToNearestWord(length);
+        length_data++;
+        _mm_prefetch(&offsetarray[j+128/sizeof(offset_type)],_MM_HINT_T0);
+      }
+      for (j; j + 8 < num_rows_; j += 8) {
+
+        __m256i offsetarray_8x = _mm256_loadu_si256((__m256i*)&offsetarray[j]);
+        __m256i offsetarray_1_8x = _mm256_loadu_si256((__m256i*)&offsetarray[j+1]);
+        __m256i length_8x = _mm256_sub_epi32(offsetarray_1_8x, offsetarray_8x);
+        //offset_type length = offsetarray[j+1] - offsetarray[j];
+//        lengths_[j] += RoundNumberOfBytesToNearestWord(length);
+        __m256i reminder_8x = _mm256_and_si256(length_8x, x7_8x);
+        reminder_8x = _mm256_sub_epi32(x8_8x,reminder_8x);
+        reminder_8x = _mm256_and_si256(reminder_8x,x7_8x);
+        __m256i dst_length_8x = _mm256_load_si256((__m256i*)length_data);
+        dst_length_8x = _mm256_add_epi32(dst_length_8x, reminder_8x);
+        _mm256_store_si256((__m256i*)length_data,dst_length_8x);
+        length_data+=8;
+        _mm_prefetch(&offsetarray[j+(128+128)/sizeof(offset_type)],_MM_HINT_T0);
+      }
+      for (j; j < num_rows_; j++) {
+
+        offset_type length = offsetarray[j+1] - offsetarray[j];
+        *length_data += RoundNumberOfBytesToNearestWord(length);
+        length_data++;
       }
     }
 
@@ -186,7 +215,7 @@ arrow::Status ColumnarToRowConverter::Init() {
     offsets_[i] = offsets_[i - 1] + lengths_[i - 1];
     total_memory_size += lengths_[i];
   }
-
+  
   ARROW_ASSIGN_OR_RAISE(buffer_, AllocateBuffer(total_memory_size, memory_pool_));
 
   memset(buffer_->mutable_data(), 0, sizeof(int8_t) * total_memory_size);
@@ -367,10 +396,10 @@ std::array<uint8_t, 16> ToByteArray(arrow::Decimal128 value, int32_t* length) {
   return out;
 }
 
-arrow::Status WriteValue(uint8_t* buffer_address, int64_t field_offset,
+arrow::Status WriteValue(uint8_t* buffer_address, int32_t field_offset,
                          std::shared_ptr<arrow::Array> array, int32_t col_index,
-                         int64_t num_rows, std::vector<int64_t>& offsets,
-                         std::vector<int64_t>& buffer_cursor) {
+                         int32_t num_rows, std::vector<int32_t>& offsets,
+                         std::vector<int32_t>& buffer_cursor) {
   switch (array->type_id()) {
     case arrow::BooleanType::type_id: {
       // Boolean type
@@ -402,7 +431,7 @@ arrow::Status WriteValue(uint8_t* buffer_address, int64_t field_offset,
           // write the variable value
           memcpy(buffer_address + offsets[i] + buffer_cursor[i], value, length);
           // write the offset and size
-          int64_t offsetAndSize = (buffer_cursor[i] << 32) | length;
+          int64_t offsetAndSize = ((int64_t)buffer_cursor[i] << 32) | length;
           memcpy(buffer_address + offsets[i] + field_offset, &offsetAndSize,
                  sizeof(int64_t));
           buffer_cursor[i] += length;
@@ -441,7 +470,7 @@ arrow::Status WriteValue(uint8_t* buffer_address, int64_t field_offset,
             // write the variable value
             memcpy(buffer_address + buffer_cursor[i] + offsets[i], &out[0], size);
             // write the offset and size
-            int64_t offsetAndSize = (buffer_cursor[i] << 32) | size;
+            int64_t offsetAndSize = ((int64_t)buffer_cursor[i] << 32) | size;
             memcpy(buffer_address + offsets[i] + field_offset, &offsetAndSize,
                    sizeof(int64_t));
           }
@@ -689,7 +718,7 @@ arrow::Status WriteValue(uint8_t* buffer_address, int64_t field_offset,
             total_size += num_elements * 8;
           }
           // write the offset and size for per row
-          int64_t offsetAndSize = (buffer_cursor[i] << 32) | total_size;
+          int64_t offsetAndSize = ((int64_t)buffer_cursor[i] << 32) | total_size;
           memcpy(buffer_address + offsets[i] + field_offset, &offsetAndSize,
                  sizeof(int64_t));
           buffer_cursor[i] += total_size;
