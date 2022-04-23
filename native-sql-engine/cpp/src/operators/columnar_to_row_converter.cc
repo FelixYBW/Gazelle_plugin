@@ -217,6 +217,8 @@ arrow::Status ColumnarToRowConverter::Init() {
   
   ARROW_ASSIGN_OR_RAISE(buffer_, AllocateBuffer(total_memory_size, memory_pool_));
 
+//  std::cout << std::hex << "buffer addr = " << buffer_->address() << std::dec  << " size = " << total_memory_size << std::endl;
+
   memset(buffer_->mutable_data(), 0, sizeof(int8_t) * total_memory_size);
 
   buffer_address_ = buffer_->mutable_data();

@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 project(spark_columnar_plugin)
 
 #add_definitions(-DPROCESSROW)
+add_definitions(-DARROW_JEMALLOC)
 add_definitions(-DSKIPWRITE -DSKIPCOMPRESS -DPROCESSROW)
 
 add_compile_options(-g)

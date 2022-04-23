@@ -41,11 +41,9 @@ namespace columnartorow {
 
 const int batch_buffer_size = 32768;
 
-LargePageMemoryPool largepage_memory_pool(nullptr);
-
 class GoogleBenchmarkColumnarToRow : public ::benchmark::Fixture {
  public:
- GoogleBenchmarkColumnarToRow()
+ GoogleBenchmarkColumnarToRow():largepage_pool(arrow::default_memory_pool())
   {
     file_name = "/mnt/DP_disk1/lineitem/part-00025-356249a2-c285-42b9-8a18-5b10be61e0c4-c000.snappy.parquet";
     GetRecordBatchReader(file_name);
@@ -68,7 +66,7 @@ class GoogleBenchmarkColumnarToRow : public ::benchmark::Fixture {
     properties.set_use_threads(false);
 
     ASSERT_NOT_OK(::parquet::arrow::FileReader::Make(
-        arrow::default_memory_pool(), ::parquet::ParquetFileReader::Open(file),
+        ::arrow::default_memory_pool(), ::parquet::ParquetFileReader::Open(file),
         properties, &parquet_reader));
 
     ASSERT_NOT_OK(parquet_reader->GetSchema(&schema));
@@ -108,6 +106,7 @@ class GoogleBenchmarkColumnarToRow : public ::benchmark::Fixture {
   std::shared_ptr<arrow::Schema> schema;
   std::vector<std::shared_ptr<::gandiva::Expression>> expr_vector;
   parquet::ArrowReaderProperties properties;
+  LargePageMemoryPool largepage_pool;
 
 };
 
@@ -124,7 +123,7 @@ BENCHMARK_DEFINE_F(GoogleBenchmarkColumnarToRow, CacheScan)(benchmark::State& st
     int64_t init_time = 0;
     int64_t write_time = 0;
 
-    std::vector<int> local_column_indices;
+/*    std::vector<int> local_column_indices;
     local_column_indices.push_back(0);
     local_column_indices.push_back(1);
     local_column_indices.push_back(2);
@@ -132,10 +131,10 @@ BENCHMARK_DEFINE_F(GoogleBenchmarkColumnarToRow, CacheScan)(benchmark::State& st
     local_column_indices.push_back(5);
     local_column_indices.push_back(6);
     local_column_indices.push_back(7);
-
+*/
     std::shared_ptr<arrow::Schema> local_schema;
     local_schema = std::make_shared<arrow::Schema>(*schema.get());
-
+/*
     ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(15));
     ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(14));
     ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(13));
@@ -145,18 +144,18 @@ BENCHMARK_DEFINE_F(GoogleBenchmarkColumnarToRow, CacheScan)(benchmark::State& st
     ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(9));
     ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(8));
     ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(3));
-
+*/
     if(state.thread_index() == 0)
       std::cout << local_schema->ToString() << std::endl;
 
     std::unique_ptr<::parquet::arrow::FileReader> parquet_reader;
     std::shared_ptr<RecordBatchReader> record_batch_reader;
     ASSERT_NOT_OK(::parquet::arrow::FileReader::Make(
-        arrow::default_memory_pool(), ::parquet::ParquetFileReader::Open(file),
+        ::arrow::default_memory_pool(), ::parquet::ParquetFileReader::Open(file),
         properties, &parquet_reader));
 
     std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
-    ASSERT_NOT_OK(parquet_reader->GetRecordBatchReader(row_group_indices, local_column_indices,
+    ASSERT_NOT_OK(parquet_reader->GetRecordBatchReader(row_group_indices, column_indices,
                                                   &record_batch_reader));
     do{
       TIME_NANO_OR_THROW(elapse_read, record_batch_reader->ReadNext(&record_batch));
@@ -174,7 +173,7 @@ BENCHMARK_DEFINE_F(GoogleBenchmarkColumnarToRow, CacheScan)(benchmark::State& st
     {
       for (const auto& batch : batches) {
         std::shared_ptr<ColumnarToRowConverter> columnarToRowConverter = 
-          std::make_shared<ColumnarToRowConverter>(batch, arrow::default_memory_pool());
+          std::make_shared<ColumnarToRowConverter>(batch, &largepage_pool);
         TIME_NANO_OR_THROW(init_time, columnarToRowConverter->Init());
         TIME_NANO_OR_THROW(write_time, columnarToRowConverter->Write());
       }
@@ -220,7 +219,7 @@ BENCHMARK_DEFINE_F(GoogleBenchmarkColumnarToRow, IterateScan)(benchmark::State& 
         num_batches += 1;
         num_rows += record_batch->num_rows();
         std::shared_ptr<ColumnarToRowConverter> columnarToRowConverter = 
-          std::make_shared<ColumnarToRowConverter>(record_batch, arrow::default_memory_pool());
+          std::make_shared<ColumnarToRowConverter>(record_batch,&largepage_pool);
         TIME_NANO_OR_THROW(init_time, columnarToRowConverter->Init());
         TIME_NANO_OR_THROW(write_time, columnarToRowConverter->Write());
         TIME_NANO_OR_THROW(elapse_read, record_batch_reader->ReadNext(&record_batch));

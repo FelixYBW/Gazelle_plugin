@@ -20,7 +20,8 @@
 #include <sys/mman.h>
 
 #include <arrow/memory_pool.h>
-#include <jemalloc/jemalloc.h>
+
+#define ENABLELARGEPAGE
 
 class ARROW_EXPORT LargePageMemoryPool : public MemoryPool {
  public:
@@ -30,46 +31,44 @@ class ARROW_EXPORT LargePageMemoryPool : public MemoryPool {
 
   Status Allocate(int64_t size, uint8_t** out) override
   {
+#ifdef ENABLELARGEPAGE
     if (size <2*1024*1024)
     {
       return pool_->Allocate(size, out);
+    } else
+    {
+      Status st = pool_->AlignAllocate(size, out, 2*1024*1024);
+      madvise(*out, size, /*MADV_HUGEPAGE */ 14);
+      return st;
     }
-#ifdef ARROW_JEMALLOC
-
-    *out = reinterpret_cast<uint8_t*>(
-        mallocx(static_cast<size_t>(size), MALLOCX_ALIGN(2*1024*1024)));
-    if (*out == NULL) {
-      return Status::OutOfMemory("malloc of size ", size, " failed");
-    }
-    madvise(*out, size, /*MADV_HUGEPAGE */ 14);
-    return Status::OK();
 #else
-    return pool_->Allocate(size, out);
+      return pool_->Allocate(size, out);
 #endif
   }
 
   Status Reallocate(int64_t old_size, int64_t new_size, uint8_t** ptr) override{
+    return pool_->Reallocate(old_size, new_size, ptr);
+#ifdef ENABLELARGEPAGE
     if (new_size <2*1024*1024)
     {
       return pool_->Reallocate(old_size, new_size, ptr);
+    }else{
+      Status st =pool_->AlignReallocate(old_size, new_size, ptr, 2*1024*1024);
+      madvise(*ptr, new_size, /*MADV_HUGEPAGE */ 14);
+      return st;
     }
-#ifdef ARROW_JEMALLOC
-
-    *ptr = reinterpret_cast<uint8_t*>(
-        rallocx(*ptr, static_cast<size_t>(new_size), MALLOCX_ALIGN(2*1024*1024)));
-    if (*ptr == NULL) {
-      *ptr = previous_ptr;
-      return Status::OutOfMemory("realloc of size ", new_size, " failed");
-    }
-    madvise(*ptr, size, /*MADV_HUGEPAGE */ 14);
-    return Status::OK();
 #else
-    return pool_->Reallocate(old_size, new_size, ptr);
+      return pool_->Reallocate(old_size, new_size, ptr);
 #endif
   }
 
   void Free(uint8_t* buffer, int64_t size) override{
-    return pool_->Free(buffer, size);
+    if (size <2*1024*1024)
+    {
+      pool_->Free(buffer, size);
+    } else {
+      pool_->Free(buffer, size, 2*1024*1024);
+    }
   }
 
   int64_t bytes_allocated() const override{
