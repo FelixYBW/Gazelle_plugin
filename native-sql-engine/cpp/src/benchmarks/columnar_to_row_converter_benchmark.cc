@@ -34,11 +34,14 @@
 #include "codegen/code_generator_factory.h"
 #include "operators/columnar_to_row_converter.h"
 #include "tests/test_utils.h"
+#include "utils/memorypool.h"
 
 namespace sparkcolumnarplugin {
 namespace columnartorow {
 
 const int batch_buffer_size = 32768;
+
+LargePageMemoryPool largepage_memory_pool(nullptr);
 
 class GoogleBenchmarkColumnarToRow : public ::benchmark::Fixture {
  public:
@@ -121,6 +124,31 @@ BENCHMARK_DEFINE_F(GoogleBenchmarkColumnarToRow, CacheScan)(benchmark::State& st
     int64_t init_time = 0;
     int64_t write_time = 0;
 
+    std::vector<int> local_column_indices;
+    local_column_indices.push_back(0);
+    local_column_indices.push_back(1);
+    local_column_indices.push_back(2);
+    local_column_indices.push_back(4);
+    local_column_indices.push_back(5);
+    local_column_indices.push_back(6);
+    local_column_indices.push_back(7);
+
+    std::shared_ptr<arrow::Schema> local_schema;
+    local_schema = std::make_shared<arrow::Schema>(*schema.get());
+
+    ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(15));
+    ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(14));
+    ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(13));
+    ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(12));
+    ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(11));
+    ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(10));
+    ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(9));
+    ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(8));
+    ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(3));
+
+    if(state.thread_index() == 0)
+      std::cout << local_schema->ToString() << std::endl;
+
     std::unique_ptr<::parquet::arrow::FileReader> parquet_reader;
     std::shared_ptr<RecordBatchReader> record_batch_reader;
     ASSERT_NOT_OK(::parquet::arrow::FileReader::Make(
@@ -128,7 +156,7 @@ BENCHMARK_DEFINE_F(GoogleBenchmarkColumnarToRow, CacheScan)(benchmark::State& st
         properties, &parquet_reader));
 
     std::vector<std::shared_ptr<arrow::RecordBatch>> batches;
-    ASSERT_NOT_OK(parquet_reader->GetRecordBatchReader(row_group_indices, column_indices,
+    ASSERT_NOT_OK(parquet_reader->GetRecordBatchReader(row_group_indices, local_column_indices,
                                                   &record_batch_reader));
     do{
       TIME_NANO_OR_THROW(elapse_read, record_batch_reader->ReadNext(&record_batch));

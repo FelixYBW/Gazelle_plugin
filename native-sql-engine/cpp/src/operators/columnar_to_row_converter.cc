@@ -403,6 +403,7 @@ arrow::Status WriteValue(uint8_t* buffer_address, int32_t field_offset,
     case arrow::BooleanType::type_id: {
       // Boolean type
       auto bool_array = std::static_pointer_cast<arrow::BooleanArray>(array);
+
       for (auto i = 0; i < num_rows; i++) {
         bool is_null = array->IsNull(i);
         if (is_null) {
@@ -729,17 +730,29 @@ arrow::Status WriteValue(uint8_t* buffer_address, int32_t field_offset,
       switch (arrow::bit_width(array->type_id())) {
 #define PROCESS(ARRAYTYPE, BYTES) {                                                     \
       /* default Numeric type */                                                              \
-      auto numeric_array = std::static_pointer_cast<arrow::ARRAYTYPE>(array);               \
-      for (auto i = 0; i < num_rows; i++) {                          \
-        bool is_null = array->IsNull(i);                                  \
-        if (is_null) {                                                      \
-          SetNullAt(buffer_address, offsets[i], field_offset, col_index);                \
-        } else {                                                                          \
-          auto value = numeric_array->Value(i);                                      \
-          memcpy(buffer_address + offsets[i] + field_offset, &value, BYTES);           \
-        }                                                                           \
-        _mm_prefetch(buffer_address, _MM_HINT_T2);                           \
-      }                                                                      \
+      auto dataptr = array->data()->buffers[1]->data();                      \
+      uint32_t specoffset = num_rows> 2? offsets[2] - offsets[0] : 0;                           \
+      if (array->null_count()==0)                                    \
+      {                                                               \
+        for (auto i = 0; i < num_rows; i++) {                          \
+          *reinterpret_cast<arrow::ARRAYTYPE::value_type*>(buffer_address + offsets[i] + field_offset) = \
+              reinterpret_cast<const arrow::ARRAYTYPE::value_type*>(dataptr)[i]; \
+          _mm_prefetch(buffer_address+specoffset, _MM_HINT_T2);                           \
+        }                                                                      \
+      }else                                                            \
+      {                                                                 \
+        auto numeric_array = std::static_pointer_cast<arrow::ARRAYTYPE>(array);               \
+        for (auto i = 0; i < num_rows; i++) {                          \
+          bool is_null = array->IsNull(i);                                  \
+          if (is_null) {                                                      \
+            SetNullAt(buffer_address, offsets[i], field_offset, col_index);                \
+          } else {                                                                          \
+            auto value = numeric_array->Value(i);                                      \
+            memcpy(buffer_address + offsets[i] + field_offset, &value, BYTES);           \
+          }                                                                           \
+          _mm_prefetch(buffer_address, _MM_HINT_T2);                           \
+        }                                                                      \
+      }                                                                        \
       break;                                                                  \
     }
       case 8:
