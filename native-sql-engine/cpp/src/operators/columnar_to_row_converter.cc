@@ -113,7 +113,7 @@ arrow::Status ColumnarToRowConverter::Init() {
 
   // Initialize the offsets_ , lengths_, buffer_cursor_
   lengths_.resize(num_rows_,fixed_size_per_row);
-  offsets_.resize(num_rows_, 0);
+  offsets_.resize(num_rows_ + 1);
   buffer_cursor_.resize(num_rows_, nullBitsetWidthInBytes_ + 8 * num_cols_);
   
   // Calculated the lengths_
@@ -210,16 +210,19 @@ arrow::Status ColumnarToRowConverter::Init() {
   }
   // Calculated the offsets_  and total memory size based on lengths_
   int64_t total_memory_size = lengths_[0];
+  offsets_[0] = 0;
   for (auto i = 1; i < num_rows_; i++) {
-    offsets_[i] = offsets_[i - 1] + lengths_[i - 1];
+    offsets_[i] = total_memory_size;
     total_memory_size += lengths_[i];
   }
+  offsets_[num_rows_] = total_memory_size;
   
-  ARROW_ASSIGN_OR_RAISE(buffer_, AllocateBuffer(total_memory_size, memory_pool_));
+  // allocate one more cache line to ease avx operations
+  ARROW_ASSIGN_OR_RAISE(buffer_, AllocateBuffer(total_memory_size+64, memory_pool_));
 
 //  std::cout << std::hex << "buffer addr = " << buffer_->address() << std::dec  << " size = " << total_memory_size << std::endl;
 
-  memset(buffer_->mutable_data(), 0, sizeof(int8_t) * total_memory_size);
+//  memset(buffer_->mutable_data(), 0, sizeof(int8_t) * total_memory_size);
 
   buffer_address_ = buffer_->mutable_data();
   return arrow::Status::OK();
@@ -415,6 +418,9 @@ arrow::Status ColumnarToRowConverter::Write() {
     std::vector<int64_t> col_arrdata_offsets;
     dataptrs.resize(num_cols_);
     col_arrdata_offsets.resize(num_cols_);
+    std::vector<uint8_t> nullvec;
+    nullvec.resize(num_cols_,0);
+
   
   for (auto col_index = 0; col_index < num_cols_; col_index++) {
     auto array = rb_->column(col_index);
@@ -422,6 +428,8 @@ arrow::Status ColumnarToRowConverter::Write() {
     auto arraydata = array->data();
     auto bufs = arraydata->buffers;
     col_arrdata_offsets[col_index] = arraydata->offset;
+
+    nullvec[col_index] = (array->null_count()==0);
 
     if (arrow::bit_width(array->type_id()) > 1)
     {
@@ -447,6 +455,13 @@ arrow::Status ColumnarToRowConverter::Write() {
   }
 
 for (auto i = 0; i < num_rows_; i++) {
+  __m256i fill_0_8x;
+  fill_0_8x = _mm256_xor_si256(fill_0_8x, fill_0_8x);
+  auto rowlength = offsets[i+1] - offsets[i];
+  for (auto p = 0; p<rowlength+32;p+=32)
+  {
+    _mm256_storeu_si256((__m256i*)(buffer_address+offsets[i]),fill_0_8x);
+  }
   for (auto col_index = 0; col_index < num_cols_; col_index++) {
     auto& array = arrays[col_index];
 
@@ -474,7 +489,7 @@ for (auto i = 0; i < num_rows_; i++) {
         auto binary_array = (arrow::BinaryArray*)(array.get());
         using offset_type = typename arrow::BinaryType::offset_type;
         offset_type* offsets = (offset_type*)(dataptrs[col_index][1]);
-        if (array->null_count()==0)
+        if (nullvec[col_index])
         {
           offset_type length = offsets[i+1]-offsets[i];
           auto value = &dataptrs[col_index][2][offsets[i+1]];
@@ -796,7 +811,7 @@ for (auto i = 0; i < num_rows_; i++) {
   #define PROCESS(ARRAYTYPE, BYTES) {                                                     \
         /* default Numeric type */                                                              \
         auto dataptr = dataptrs[col_index][1];                      \
-        if (array->null_count()==0)                                    \
+        if (nullvec[col_index])                                    \
         {                                                               \
           /*for (auto i = 0; i < num_rows; i++) {*/                          \
             *reinterpret_cast<arrow::ARRAYTYPE::value_type*>(buffer_address + offsets[i] + field_offset) = \
