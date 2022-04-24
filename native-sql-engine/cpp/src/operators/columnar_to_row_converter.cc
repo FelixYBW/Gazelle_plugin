@@ -245,7 +245,8 @@ inline void SetNullAt(uint8_t* buffer_address, int64_t row_offset, int64_t field
                int32_t col_index) {
   BitSet(buffer_address + row_offset, col_index);
   // set the value to 0
-  memset(buffer_address + row_offset + field_offset, 0, sizeof(int64_t));
+  *(int64_t*)(buffer_address + row_offset + field_offset) = 0;
+
   return;
 }
 
@@ -400,13 +401,6 @@ std::array<uint8_t, 16> ToByteArray(arrow::Decimal128 value, int32_t* length) {
   return out;
 }
 
-arrow::Status WriteValue(uint8_t* buffer_address, int32_t field_offset,
-                         std::shared_ptr<arrow::Array> array, int32_t col_index,
-                         int32_t num_rows, std::vector<int32_t>& offsets,
-                         std::vector<int32_t>& buffer_cursor) {
-
-}
-
 arrow::Status ColumnarToRowConverter::Write() {
                
     auto buffer_address = buffer_address_;
@@ -462,6 +456,12 @@ for (auto i = 0; i < num_rows_; i++) {
   {
     _mm256_storeu_si256((__m256i*)(buffer_address+offsets[i]),fill_0_8x);
   }
+  auto x = i + ((i==(num_rows_-1))-1) & 1;
+
+  //_mm_prefetch(buffer_address+offsets[x],_MM_HINT_T0);
+
+  x = (i==num_rows_)?i+2:i;
+
   for (auto col_index = 0; col_index < num_cols_; col_index++) {
     auto& array = arrays[col_index];
 
@@ -489,7 +489,7 @@ for (auto i = 0; i < num_rows_; i++) {
         auto binary_array = (arrow::BinaryArray*)(array.get());
         using offset_type = typename arrow::BinaryType::offset_type;
         offset_type* offsets = (offset_type*)(dataptrs[col_index][1]);
-        if (nullvec[col_index])
+        if (nullvec[col_index] || (!array->IsNull(i)))
         {
           offset_type length = offsets[i+1]-offsets[i];
           auto value = &dataptrs[col_index][2][offsets[i+1]];
@@ -500,22 +500,7 @@ for (auto i = 0; i < num_rows_; i++) {
           *(int64_t*)(buffer_address + offsets[i] + field_offset) = offsetAndSize;
           buffer_cursor[i] += length;
         }else{
-//        for (auto i = 0; i < num_rows; i++) {
-          bool is_null = array->IsNull(i);
-          if (is_null) {
             SetNullAt(buffer_address, offsets[i], field_offset, col_index);
-          } else {
-            offset_type length;
-            auto value = binary_array->GetValue(i, &length);
-            // write the variable value
-            memcpy(buffer_address + offsets[i] + buffer_cursor[i], value, length);
-            // write the offset and size
-            int64_t offsetAndSize = ((int64_t)buffer_cursor[i] << 32) | length;
-            memcpy(buffer_address + offsets[i] + field_offset, &offsetAndSize,
-                  sizeof(int64_t));
-            buffer_cursor[i] += length;
-          }
-//        }
         }
         break;
       }
