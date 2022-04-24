@@ -237,10 +237,6 @@ inline void BitSet(uint8_t* buffer_address, int32_t index) {
   memcpy(buffer_address + wordOffset, &value, sizeof(int64_t));
 }
 
-inline int64_t GetFieldOffset(int64_t nullBitsetWidthInBytes, int32_t index) {
-  return nullBitsetWidthInBytes + 8L * index;
-}
-
 inline void SetNullAt(uint8_t* buffer_address, int64_t row_offset, int64_t field_offset,
                int32_t col_index) {
   BitSet(buffer_address + row_offset, col_index);
@@ -415,6 +411,9 @@ arrow::Status ColumnarToRowConverter::Write() {
     std::vector<uint8_t> nullvec;
     nullvec.resize(num_cols_,0);
 
+    std::vector<arrow::Type::type> typevec;
+    typevec.resize(num_cols_);
+
   
   for (auto col_index = 0; col_index < num_cols_; col_index++) {
     auto array = rb_->column(col_index);
@@ -424,6 +423,7 @@ arrow::Status ColumnarToRowConverter::Write() {
     col_arrdata_offsets[col_index] = arraydata->offset;
 
     nullvec[col_index] = (array->null_count()==0);
+    typevec[col_index] = array->type_id();
 
     if (arrow::bit_width(array->type_id()) > 1)
     {
@@ -456,18 +456,15 @@ for (auto i = 0; i < num_rows_; i++) {
   {
     _mm256_storeu_si256((__m256i*)(buffer_address+offsets[i]),fill_0_8x);
   }
-  auto x = i + ((i==(num_rows_-1))-1) & 1;
-
+  //auto x = i + ((i==(num_rows_-1))-1) & 1;
   //_mm_prefetch(buffer_address+offsets[x],_MM_HINT_T0);
-
-  x = (i==num_rows_)?i+2:i;
-
+  auto offset = offsets[i];
   for (auto col_index = 0; col_index < num_cols_; col_index++) {
     auto& array = arrays[col_index];
 
-    int64_t field_offset = GetFieldOffset(nullBitsetWidthInBytes_, col_index);
+    int64_t field_offset = nullBitsetWidthInBytes_ + (col_index << 3L);
 
-    switch (array->type_id()) {
+    switch (typevec[col_index]) {
       case arrow::BooleanType::type_id: {
         // Boolean type
         auto bool_array = std::static_pointer_cast<arrow::BooleanArray>(array);
@@ -792,30 +789,18 @@ for (auto i = 0; i < num_rows_; i++) {
         break;
       }
       default: {
-        switch (arrow::bit_width(array->type_id())) {
+        switch (arrow::bit_width(typevec[col_index])) {
   #define PROCESS(ARRAYTYPE, BYTES) {                                                     \
         /* default Numeric type */                                                              \
         auto dataptr = dataptrs[col_index][1];                      \
-        if (nullvec[col_index])                                    \
+        if (nullvec[col_index] || (!array->IsNull(i)))                                    \
         {                                                               \
-          /*for (auto i = 0; i < num_rows; i++) {*/                          \
-            *reinterpret_cast<arrow::ARRAYTYPE::value_type*>(buffer_address + offsets[i] + field_offset) = \
+            *reinterpret_cast<arrow::ARRAYTYPE::value_type*>(buffer_address + offset + field_offset) = \
                 reinterpret_cast<const arrow::ARRAYTYPE::value_type*>(dataptr)[i]; \
-            _mm_prefetch(&dataptr[i], _MM_HINT_T2);                           \
-          /*}*/                                                                      \
+            _mm_prefetch(&reinterpret_cast<const arrow::ARRAYTYPE::value_type*>(dataptr)[i], _MM_HINT_T2);        \
         }else                                                            \
         {                                                                 \
-          auto numeric_array = std::static_pointer_cast<arrow::ARRAYTYPE>(array);               \
-          /*for (auto i = 0; i < num_rows; i++) {   */                       \
-            bool is_null = array->IsNull(i);                                  \
-            if (is_null) {                                                      \
-              SetNullAt(buffer_address, offsets[i], field_offset, col_index);                \
-            } else {                                                                          \
-              auto value = numeric_array->Value(i);                                      \
-              memcpy(buffer_address + offsets[i] + field_offset, &value, BYTES);           \
-            }                                                                           \
-            _mm_prefetch(buffer_address, _MM_HINT_T2);                           \
-          /*}*/                                                                      \
+          SetNullAt(buffer_address, offsets[i], field_offset, col_index);                \
         }                                                                        \
         break;                                                                  \
       }
