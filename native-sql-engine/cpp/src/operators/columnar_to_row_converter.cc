@@ -249,9 +249,9 @@ inline void BitSet(uint8_t* buffer_address, int32_t index) {
   int64_t mask = 1L << (index & 0x3f);  // mod 64 and shift
   int64_t wordOffset = (index >> 6) * 8;
   int64_t word;
-  memcpy(&word, buffer_address + wordOffset, sizeof(int64_t));
+  word = *(int64_t*)(buffer_address + wordOffset);
   int64_t value = word | mask;
-  memcpy(buffer_address + wordOffset, &value, sizeof(int64_t));
+  *(int64_t*)(buffer_address + wordOffset) = value;
 }
 
 inline void SetNullAt(uint8_t* buffer_address, int64_t row_offset, int64_t field_offset,
@@ -482,8 +482,8 @@ for (i; i + BATCH_ROW_NUM < num_rows_; i+=BATCH_ROW_NUM) {
     for (auto p = 0; p<rowlength+32;p+=32)
     {
       _mm256_storeu_si256((__m256i*)(buffer_address+offsets[j]),fill_0_8x);
+      _mm_prefetch(buffer_address+offsets[j]+128,_MM_HINT_T0);
     }
-    _mm_prefetch(buffer_address+offsets[j],_MM_HINT_T1);
   }
   //auto x = i + ((i==(num_rows_-1))-1) & 1;
   //_mm_prefetch(buffer_address+offsets[x],_MM_HINT_T0);
@@ -520,15 +520,16 @@ for (i; i + BATCH_ROW_NUM < num_rows_; i+=BATCH_ROW_NUM) {
             offset_type length = offsets[j+1]-offsets[j];
             auto value = &dataptrs[col_index][2][offsets[j]];
             // write the variable value
-          offset_type k;
-          for(k=0;k+64<length;k+=64)
-          {
-            __m512i v = _mm512_loadu_si512((const __m512i*)value+k);
-            _mm512_storeu_si512((__m512i*)(buffer_address + offsets[i] + buffer_cursor[i]+k),v);
-          }
-          uint64_t mask=(1L << (length-k))-1;
-          __m512i v = _mm512_maskz_loadu_epi8(mask, value+k);
-            _mm512_mask_storeu_epi8(buffer_address + offsets[i] + buffer_cursor[i]+k, mask, v);
+            offset_type k;
+            for(k=0;k+32<length;k+=32)
+            {
+              __m256i v = _mm256_loadu_si256((const __m256i*)value+k);
+              _mm256_storeu_si256((__m256i*)(buffer_address + offsets[j] + buffer_cursor[j]+k),v);
+            }
+            auto mask=(1L << (length-k))-1;
+            __m256i v = _mm256_maskz_loadu_epi8(mask, value+k);
+             _mm256_mask_storeu_epi8(buffer_address + offsets[j] + buffer_cursor[j]+k, mask, v);
+
           // write the offset and size
           int64_t offsetAndSize = ((int64_t)buffer_cursor[i] << 32) | length;
           *(int64_t*)(buffer_address + offsets[i] + field_offset) = offsetAndSize;
@@ -899,14 +900,15 @@ for (i; i < num_rows_; i++) {
           auto value = &dataptrs[col_index][2][offsets[i+1]];
           // write the variable value
           offset_type k;
-          for(k=0;k+64<length;k+=64)
-          {
-            __m512i v = _mm512_loadu_si512((const __m512i*)value+k);
-            _mm512_storeu_si512((__m512i*)(buffer_address + offsets[i] + buffer_cursor[i]+k),v);
-          }
-          uint64_t mask=(1L << (length-k))-1;
-          __m512i v = _mm512_maskz_loadu_epi8(mask, value+k);
-            _mm512_mask_storeu_epi8(buffer_address + offsets[i] + buffer_cursor[i]+k, mask, v);
+          auto j=i;
+            for(k=0;k+32<length;k+=32)
+            {
+              __m256i v = _mm256_loadu_si256((const __m256i*)value+k);
+              _mm256_storeu_si256((__m256i*)(buffer_address + offsets[j] + buffer_cursor[j]+k),v);
+            }
+            auto mask=(1L << (length-k))-1;
+            __m256i v = _mm256_maskz_loadu_epi8(mask, value+k);
+             _mm256_mask_storeu_epi8(buffer_address + offsets[j] + buffer_cursor[j]+k, mask, v);
           // write the offset and size
           int64_t offsetAndSize = ((int64_t)buffer_cursor[i] << 32) | length;
           *(int64_t*)(buffer_address + offsets[i] + field_offset) = offsetAndSize;
