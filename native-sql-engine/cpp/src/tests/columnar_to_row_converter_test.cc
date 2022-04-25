@@ -142,27 +142,24 @@ const std::vector<std::string> UnsaferowTest::input_data_list_array_ = {
 
 TEST_F(UnsaferowTest, TestNullTypeCheck) {
   std::shared_ptr<ColumnarToRowConverter> unsafe_row_writer_reader =
-      std::make_shared<ColumnarToRowConverter>(nullable_input_batch_,
-                                               arrow::default_memory_pool());
+      std::make_shared<ColumnarToRowConverter>(arrow::default_memory_pool());
 
-  unsafe_row_writer_reader->Init();
+  unsafe_row_writer_reader->Init(nullable_input_batch_);
   unsafe_row_writer_reader->Write();
 }
 
 TEST_F(UnsaferowTest, TestColumnarToRowConverter) {
   std::shared_ptr<ColumnarToRowConverter> unsafe_row_writer_reader =
-      std::make_shared<ColumnarToRowConverter>(input_batch_,
-                                               arrow::default_memory_pool());
+      std::make_shared<ColumnarToRowConverter>(arrow::default_memory_pool());
 
-  unsafe_row_writer_reader->Init();
+  unsafe_row_writer_reader->Init(input_batch_);
   unsafe_row_writer_reader->Write();
 }
 
 TEST_F(UnsaferowTest, TestListArrayType) {
   std::shared_ptr<ColumnarToRowConverter> unsafe_row_writer_reader =
-      std::make_shared<ColumnarToRowConverter>(input_batch_list_array_,
-                                               arrow::default_memory_pool());
-  unsafe_row_writer_reader->Init();
+      std::make_shared<ColumnarToRowConverter>(arrow::default_memory_pool());
+  unsafe_row_writer_reader->Init(input_batch_list_array_);
   unsafe_row_writer_reader->Write();
 }
 }  // namespace columnartorow

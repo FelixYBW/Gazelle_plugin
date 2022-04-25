@@ -35,11 +35,10 @@ namespace columnartorow {
 
 class ColumnarToRowConverter {
  public:
-  ColumnarToRowConverter(std::shared_ptr<arrow::RecordBatch> rb,
-                         arrow::MemoryPool* memory_pool)
-      : rb_(rb), memory_pool_(memory_pool) {}
+  ColumnarToRowConverter(arrow::MemoryPool* memory_pool)
+      : memory_pool_(memory_pool),buffer_(nullptr) {}
 
-  arrow::Status Init();
+  arrow::Status Init(const std::shared_ptr<arrow::RecordBatch>& rb);
   arrow::Status Write();
 
   uint8_t* GetBufferAddress() { return buffer_address_; }
