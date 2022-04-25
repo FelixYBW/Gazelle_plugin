@@ -429,7 +429,10 @@ arrow::Status ColumnarToRowConverter::Write() {
     nullvec.resize(num_cols_,0);
 
     std::vector<arrow::Type::type> typevec;
+    std::vector<uint8_t> typewidth;
+
     typevec.resize(num_cols_);
+    typewidth.resize(num_cols_);
 
   
   for (auto col_index = 0; col_index < num_cols_; col_index++) {
@@ -441,6 +444,7 @@ arrow::Status ColumnarToRowConverter::Write() {
 
     nullvec[col_index] = (array->null_count()==0);
     typevec[col_index] = array->type_id();
+    typewidth[col_index] = arrow::bit_width(typevec[col_index])>>3;
 
     if (arrow::bit_width(array->type_id()) > 1)
     {
@@ -467,16 +471,11 @@ arrow::Status ColumnarToRowConverter::Write() {
 
 int32_t i=0;
 #define BATCH_ROW_NUM 16
-#ifdef BATCH_ROW_NUM
 for (i; i + BATCH_ROW_NUM < num_rows_; i+=BATCH_ROW_NUM) {
-#else
-for (i; i < num_rows_; i+=1) {
-#endif
   __m256i fill_0_8x;
   fill_0_8x = _mm256_xor_si256(fill_0_8x, fill_0_8x);
   //_mm_prefetch(&buffer_address+offsets[i],_MM_HINT_T2);
 
-#ifdef BATCH_ROW_NUM
   for (auto j = i; j< i+BATCH_ROW_NUM; j++)
   {
     auto rowlength = offsets[j+1] - offsets[j];
@@ -488,14 +487,6 @@ for (i; i < num_rows_; i+=1) {
   }
   //auto x = i + ((i==(num_rows_-1))-1) & 1;
   //_mm_prefetch(buffer_address+offsets[x],_MM_HINT_T0);
-#else
-    auto rowlength = offsets[i+1] - offsets[i];
-    for (auto p = 0; p<rowlength+32;p+=32)
-    {
-      _mm256_storeu_si256((__m256i*)(buffer_address+offsets[i]),fill_0_8x);
-    }
-    _mm_prefetch(buffer_address+offsets[i],_MM_HINT_T1);
-#endif
   for (auto col_index = 0; col_index < num_cols_; col_index++) {
     auto& array = arrays[col_index];
     int64_t field_offset = nullBitsetWidthInBytes_ + (col_index << 3L);
@@ -522,33 +513,26 @@ for (i; i < num_rows_; i+=1) {
         auto binary_array = (arrow::BinaryArray*)(array.get());
         using offset_type = typename arrow::BinaryType::offset_type;
         offset_type* offsets = (offset_type*)(dataptrs[col_index][1]);
-#ifdef BATCH_ROW_NUM
         for(auto j=i;j<i+BATCH_ROW_NUM;j++)
-#else
-          auto j=i;
-#endif
         {
           if (nullvec[col_index] || (!array->IsNull(j)))
           {
             offset_type length = offsets[j+1]-offsets[j];
             auto value = &dataptrs[col_index][2][offsets[j]];
             // write the variable value
-            offset_type k;
-            for(k=0;k+16<length;k+=16)
-            {
-              __m128i v = _mm_loadu_si128((const __m128i*)value+k);
-              _mm_storeu_si128((__m128i*)(buffer_address + offsets[j] + buffer_cursor[j]+k),v);
-            }
-            auto mask=(1 << (length-k))-1;
-            __m128i v = _mm_maskz_loadu_epi8(mask, value+k);
-             _mm_mask_storeu_epi8(buffer_address + offsets[j] + buffer_cursor[j]+k, mask, v);
-
-//            memcpy(buffer_address + offsets[j] + buffer_cursor[j], value, length);
-            // write the offset and size
-            int64_t offsetAndSize = ((int64_t)buffer_cursor[j] << 32) | length;
-            *(int64_t*)(buffer_address + offsets[j] + field_offset) = offsetAndSize;
-            buffer_cursor[j] += RoundNumberOfBytesToNearestWord(length);
-            //_mm_prefetch(dataptrs[col_index][2]+offsets[j]+64, _MM_HINT_T0);
+          offset_type k;
+          for(k=0;k+64<length;k+=64)
+          {
+            __m512i v = _mm512_loadu_si512((const __m512i*)value+k);
+            _mm512_storeu_si512((__m512i*)(buffer_address + offsets[i] + buffer_cursor[i]+k),v);
+          }
+          uint64_t mask=(1L << (length-k))-1;
+          __m512i v = _mm512_maskz_loadu_epi8(mask, value+k);
+            _mm512_mask_storeu_epi8(buffer_address + offsets[i] + buffer_cursor[i]+k, mask, v);
+          // write the offset and size
+          int64_t offsetAndSize = ((int64_t)buffer_cursor[i] << 32) | length;
+          *(int64_t*)(buffer_address + offsets[i] + field_offset) = offsetAndSize;
+          buffer_cursor[i] += RoundNumberOfBytesToNearestWord(length);
           }else{
               SetNullAt(buffer_address, offsets[j], field_offset, col_index);
           }
@@ -843,61 +827,34 @@ for (i; i < num_rows_; i+=1) {
         break;
       }
       default: {
-        switch (arrow::bit_width(typevec[col_index])) {
-#ifdef BATCH_ROW_NUM                                                                            
-  #define PROCESS(ARRAYTYPE, BYTES) {                                                           \
-        /* default Numeric type */                                                              \
-        auto dataptr = dataptrs[col_index][1];                                                  \
-        for(auto j=i;j<i+BATCH_ROW_NUM;j++)                                                     \
-        {                                                                                       \
-          if (nullvec[col_index] || (!array->IsNull(j)))                                        \
-          {                                                                                     \
-              *reinterpret_cast<arrow::ARRAYTYPE::value_type*>(buffer_address + offsets[j] + field_offset) =           \
-                  reinterpret_cast<const arrow::ARRAYTYPE::value_type*>(dataptr)[j];            \
-              _mm_prefetch(&reinterpret_cast<const arrow::ARRAYTYPE::value_type*>(dataptr)[j+64/BYTES], _MM_HINT_T0); \
-          }else                                                                                 \
-          {                                                                                     \
-            SetNullAt(buffer_address, offsets[j], field_offset, col_index);                     \
-          }                                                                                     \
-        }                                                                                       \
-        break;                                                                                  \
-      }
-#else
-  #define PROCESS(ARRAYTYPE, BYTES) {                                                           \
-        /* default Numeric type */                                                              \
-        auto dataptr = dataptrs[col_index][1];                                                  \
-        {                                                                                       \
-          auto j=i;                                                                             \
-          if (nullvec[col_index] || (!array->IsNull(j)))                                        \
-          {                                                                                     \
-              *reinterpret_cast<arrow::ARRAYTYPE::value_type*>(buffer_address + offsets[j] + field_offset) =           \
-                  reinterpret_cast<const arrow::ARRAYTYPE::value_type*>(dataptr)[j];            \
-              _mm_prefetch(&reinterpret_cast<const arrow::ARRAYTYPE::value_type*>(dataptr)[j+128/BYTES], _MM_HINT_T1); \
-          }else                                                                                 \
-          {                                                                                     \
-            SetNullAt(buffer_address, offsets[j], field_offset, col_index);                     \
-          }                                                                                     \
-        }                                                                                       \
-        break;                                                                                  \
-      }
-#endif
-        case 8:
-          PROCESS(Int8Array, 1)
-        case 16:
-          PROCESS(Int16Array, 2)
-        case 32:
-          PROCESS(Int32Array, 4)
-        case 64:
-          PROCESS(Int64Array, 8)
-  #undef PROCESS
-        default:
-          return arrow::Status::Invalid("Unsupported data type: " + array->type_id());
+        if (typewidth[col_index]>1)
+        {
+          auto dataptr = dataptrs[col_index][1];
+          auto mask=(1L << (typewidth[col_index]))-1;
+          auto shift = _tzcnt_u32(typewidth[col_index]);
+          for(auto j=i;j<i+BATCH_ROW_NUM;j++)
+          {
+            if (nullvec[col_index] || (!array->IsNull(j)))
+            {
+              const uint8_t* srcptr = dataptr + (j << shift);
+              __m256i v = _mm256_maskz_loadu_epi8(mask, srcptr);
+              _mm256_mask_storeu_epi8(buffer_address + offsets[j] + field_offset, mask, v);
+              _mm_prefetch(srcptr+64, _MM_HINT_T0);
+            }else
+            {
+              SetNullAt(buffer_address, offsets[j], field_offset, col_index);
+            }
+          }
+          break;
+        }else
+        {
+          return arrow::Status::Invalid("Unsupported data type: " + typevec[col_index]);
         }
       }
     }
   }
 }
-#ifdef BATCH_ROW_NUM
+
 for (i; i < num_rows_; i++) {
   __m256i fill_0_8x;
   fill_0_8x = _mm256_xor_si256(fill_0_8x, fill_0_8x);
@@ -942,18 +899,18 @@ for (i; i < num_rows_; i++) {
           auto value = &dataptrs[col_index][2][offsets[i+1]];
           // write the variable value
           offset_type k;
-          for(k=0;k+16<length;k+=16)
+          for(k=0;k+64<length;k+=64)
           {
-            __m128i v = _mm_loadu_si128((const __m128i*)value+k);
-            _mm_storeu_si128((__m128i*)(buffer_address + offsets[i] + buffer_cursor[i]+k),v);
+            __m512i v = _mm512_loadu_si512((const __m512i*)value+k);
+            _mm512_storeu_si512((__m512i*)(buffer_address + offsets[i] + buffer_cursor[i]+k),v);
           }
-          auto mask=(1 << (length-k))-1;
-          __m128i v = _mm_maskz_loadu_epi8(mask, value+k);
-            _mm_mask_storeu_epi8(buffer_address + offsets[i] + buffer_cursor[i]+k, mask, v);
+          uint64_t mask=(1L << (length-k))-1;
+          __m512i v = _mm512_maskz_loadu_epi8(mask, value+k);
+            _mm512_mask_storeu_epi8(buffer_address + offsets[i] + buffer_cursor[i]+k, mask, v);
           // write the offset and size
           int64_t offsetAndSize = ((int64_t)buffer_cursor[i] << 32) | length;
           *(int64_t*)(buffer_address + offsets[i] + field_offset) = offsetAndSize;
-          buffer_cursor[i] += length;
+          buffer_cursor[i] += RoundNumberOfBytesToNearestWord(length);
         }else{
             SetNullAt(buffer_address, offsets[i], field_offset, col_index);
         }
@@ -1247,37 +1204,30 @@ for (i; i < num_rows_; i++) {
         break;
       }
       default: {
-        switch (arrow::bit_width(typevec[col_index])) {
-  #define PROCESS(ARRAYTYPE, BYTES) {                                                           \
-        /* default Numeric type */                                                              \
-        auto dataptr = dataptrs[col_index][1];                                                  \
-        if (nullvec[col_index] || (!array->IsNull(i)))                                        \
-        {                                                                                     \
-            *reinterpret_cast<arrow::ARRAYTYPE::value_type*>(buffer_address + offsets[i] + field_offset) =           \
-                reinterpret_cast<const arrow::ARRAYTYPE::value_type*>(dataptr)[i];            \
-        }else                                                                                 \
-        {                                                                                     \
-          SetNullAt(buffer_address, offsets[i], field_offset, col_index);                     \
-        }                                                                                     \
-        break;                                                                                  \
-      }
-        case 8:
-          PROCESS(Int8Array, 1)
-        case 16:
-          PROCESS(Int16Array, 2)
-        case 32:
-          PROCESS(Int32Array, 4)
-        case 64:
-          PROCESS(Int64Array, 8)
-  #undef PROCESS
-        default:
-          return arrow::Status::Invalid("Unsupported data type: " + array->type_id());
+        if (typewidth[col_index]>1)
+        {
+          auto dataptr = dataptrs[col_index][1];
+          auto mask=(1L << (typewidth[col_index]))-1;
+          auto shift = _tzcnt_u32(typewidth[col_index]);
+          if (nullvec[col_index] || (!array->IsNull(i)))
+          {
+            const uint8_t* srcptr = dataptr + (i << shift);
+            __m256i v = _mm256_maskz_loadu_epi8(mask, srcptr);
+            _mm256_mask_storeu_epi8(buffer_address + offsets[i] + field_offset, mask, v);
+            _mm_prefetch(srcptr+64, _MM_HINT_T0);
+          }else
+          {
+            SetNullAt(buffer_address, offsets[i], field_offset, col_index);
+          }
+          break;
+        }else
+        {
+          return arrow::Status::Invalid("Unsupported data type: " + typevec[col_index]);
         }
       }
     }
   }
 }
-#endif
   return arrow::Status::OK();
 }
 
