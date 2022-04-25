@@ -448,7 +448,6 @@ arrow::Status ColumnarToRowConverter::Write() {
 
     if (arrow::bit_width(array->type_id()) > 1)
     {
-
       if(bufs[0]){
         dataptrs[col_index].push_back(bufs[0]->data());
       }else{
@@ -833,13 +832,14 @@ for (i; i + BATCH_ROW_NUM < num_rows_; i+=BATCH_ROW_NUM) {
           auto dataptr = dataptrs[col_index][1];
           auto mask=(1L << (typewidth[col_index]))-1;
           auto shift = _tzcnt_u32(typewidth[col_index]);
+          auto buffer_address_tmp = buffer_address + field_offset;
           for(auto j=i;j<i+BATCH_ROW_NUM;j++)
           {
             if (nullvec[col_index] || (!array->IsNull(j)))
             {
               const uint8_t* srcptr = dataptr + (j << shift);
               __m256i v = _mm256_maskz_loadu_epi8(mask, srcptr);
-              _mm256_mask_storeu_epi8(buffer_address + offsets[j] + field_offset, mask, v);
+              _mm256_mask_storeu_epi8(buffer_address_tmp + offsets[j], mask, v);
               _mm_prefetch(srcptr+64, _MM_HINT_T0);
             }else
             {
