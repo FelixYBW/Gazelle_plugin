@@ -1312,6 +1312,7 @@ arrow::Status Splitter::SplitFixedWidthValidityBuffer(const arrow::RecordBatch& 
     if (rb.column_data(col_idx)->GetNullCount() == 0 &&
         column_has_null_[col_idx] == true) {
       // if the input record batch doesn't have null, set validity to True
+      // column_has_null_ is used to skip the partition_id_cnt_[pid] and dst_addrs[pid] access
       for (auto pid = 0; pid < num_partitions_; ++pid) {
         if (partition_id_cnt_[pid] > 0 && dst_addrs[pid] != nullptr) {
           arrow::BitUtil::SetBitsTo(dst_addrs[pid], partition_buffer_idx_base_[pid],
