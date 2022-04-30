@@ -511,13 +511,13 @@ for (i; i + BATCH_ROW_NUM < num_rows_; i+=BATCH_ROW_NUM) {
         // Binary type
         auto binary_array = (arrow::BinaryArray*)(array.get());
         using offset_type = typename arrow::BinaryType::offset_type;
-        offset_type* offsets = (offset_type*)(dataptrs[col_index][1]);
+        offset_type* offsets_local = (offset_type*)(dataptrs[col_index][1]);
         for(auto j=i;j<i+BATCH_ROW_NUM;j++)
         {
           if (nullvec[col_index] || (!array->IsNull(j)))
           {
-            offset_type length = offsets[j+1]-offsets[j];
-            auto value = &dataptrs[col_index][2][offsets[j]];
+            offset_type length = offsets_local[j+1]-offsets_local[j];
+            auto value = &dataptrs[col_index][2][offsets_local[j]];
             // write the variable value
             offset_type k;
             for(k=0;k+32<length;k+=32)
@@ -529,10 +529,10 @@ for (i; i + BATCH_ROW_NUM < num_rows_; i+=BATCH_ROW_NUM) {
             __m256i v = _mm256_maskz_loadu_epi8(mask, value+k);
              _mm256_mask_storeu_epi8(buffer_address + offsets[j] + buffer_cursor[j]+k, mask, v);
 
-          // write the offset and size
-          int64_t offsetAndSize = ((int64_t)buffer_cursor[i] << 32) | length;
-          *(int64_t*)(buffer_address + offsets[i] + field_offset) = offsetAndSize;
-          buffer_cursor[i] += RoundNumberOfBytesToNearestWord(length);
+            // write the offset and size
+            int64_t offsetAndSize = ((int64_t)buffer_cursor[j] << 32) | length;
+            *(int64_t*)(buffer_address + offsets[j] + field_offset) = offsetAndSize;
+            buffer_cursor[j] += RoundNumberOfBytesToNearestWord(length);
           }else{
               SetNullAt(buffer_address, offsets[j], field_offset, col_index);
           }
@@ -893,26 +893,26 @@ for (i; i < num_rows_; i++) {
         // Binary type
         auto binary_array = (arrow::BinaryArray*)(array.get());
         using offset_type = typename arrow::BinaryType::offset_type;
-        offset_type* offsets = (offset_type*)(dataptrs[col_index][1]);
+        offset_type* offsets_local = (offset_type*)(dataptrs[col_index][1]);
         if (nullvec[col_index] || (!array->IsNull(i)))
         {
-          offset_type length = offsets[i+1]-offsets[i];
-          auto value = &dataptrs[col_index][2][offsets[i+1]];
+          offset_type length = offsets_local[i+1]-offsets_local[i];
+          auto value = &dataptrs[col_index][2][offsets_local[i+1]];
           // write the variable value
           offset_type k;
           auto j=i;
-            for(k=0;k+32<length;k+=32)
-            {
-              __m256i v = _mm256_loadu_si256((const __m256i*)value+k);
-              _mm256_storeu_si256((__m256i*)(buffer_address + offsets[j] + buffer_cursor[j]+k),v);
-            }
-            auto mask=(1L << (length-k))-1;
-            __m256i v = _mm256_maskz_loadu_epi8(mask, value+k);
-             _mm256_mask_storeu_epi8(buffer_address + offsets[j] + buffer_cursor[j]+k, mask, v);
+          for(k=0;k+32<length;k+=32)
+          {
+            __m256i v = _mm256_loadu_si256((const __m256i*)value+k);
+            _mm256_storeu_si256((__m256i*)(buffer_address + offsets[j] + buffer_cursor[j]+k),v);
+          }
+          auto mask=(1L << (length-k))-1;
+          __m256i v = _mm256_maskz_loadu_epi8(mask, value+k);
+            _mm256_mask_storeu_epi8(buffer_address + offsets[j] + buffer_cursor[j]+k, mask, v);
           // write the offset and size
           int64_t offsetAndSize = ((int64_t)buffer_cursor[i] << 32) | length;
-          *(int64_t*)(buffer_address + offsets[i] + field_offset) = offsetAndSize;
-          buffer_cursor[i] += RoundNumberOfBytesToNearestWord(length);
+          *(int64_t*)(buffer_address + offsets[j] + field_offset) = offsetAndSize;
+          buffer_cursor[j] += RoundNumberOfBytesToNearestWord(length);
         }else{
             SetNullAt(buffer_address, offsets[i], field_offset, col_index);
         }
