@@ -159,7 +159,8 @@ class Splitter {
 
   // Allocate new partition buffer/builder. May return OOM status.
   arrow::Status AllocatePartitionBuffers(int32_t partition_id, int32_t new_size);
-
+  arrow::Status AllocateBufferFromPool(std::shared_ptr<arrow::Buffer>& buffer,
+                                       uint32_t size);
   std::string NextSpilledFileDir();
 
   arrow::Result<std::shared_ptr<arrow::ipc::IpcPayload>> GetSchemaPayload();
@@ -173,7 +174,7 @@ class Splitter {
   std::vector<std::shared_ptr<PartitionWriter>> partition_writer_;
   std::vector<std::vector<uint8_t*>> partition_fixed_width_validity_addrs_;
   std::vector<std::vector<uint8_t*>> partition_fixed_width_value_addrs_;
-  std::vector<std::vector<std::vector<std::shared_ptr<arrow::ResizableBuffer>>>>
+  std::vector<std::vector<std::vector<std::shared_ptr<arrow::Buffer>>>>
       partition_fixed_width_buffers_;
   std::vector<std::vector<std::shared_ptr<arrow::BinaryBuilder>>>
       partition_binary_builders_;
@@ -183,6 +184,10 @@ class Splitter {
   std::vector<std::vector<std::shared_ptr<arrow::ipc::IpcPayload>>>
       partition_cached_recordbatch_;
   std::vector<int64_t> partition_cached_recordbatch_size_;  // in bytes
+
+  // slice the buffer for each reducer's column, in this way we can combine into large
+  // page
+  std::shared_ptr<arrow::ResizableBuffer> combine_buffer_;
 
   std::vector<int32_t> fixed_width_array_idx_;
   std::vector<int32_t> binary_array_idx_;
