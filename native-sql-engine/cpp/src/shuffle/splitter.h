@@ -200,12 +200,6 @@ class Splitter {
   // col partid
   std::vector<std::vector<std::vector<std::shared_ptr<arrow::Buffer>>>>
       partition_buffers_;
-  // col partid
-  std::vector<std::vector<std::shared_ptr<arrow::BinaryBuilder>>>
-      partition_binary_builders_;
-  // col partid
-  std::vector<std::vector<std::shared_ptr<arrow::LargeBinaryBuilder>>>
-      partition_large_binary_builders_;
   std::vector<std::vector<std::shared_ptr<arrow::ArrayBuilder>>> partition_list_builders_;
   // col partid
 

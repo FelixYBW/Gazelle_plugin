@@ -273,22 +273,18 @@ arrow::Status Splitter::Init() {
   input_fixed_width_has_null_.resize(array_cnt, false);
 
   std::for_each(partition_validity_addrs_.begin(),partition_validity_addrs_.end(),
-      [](std::vector<uint8_t *>& ){
-
+      [this](std::vector<uint8_t *>& v){
+        v.resize(num_partitions_, nullptr);
       });
-  for (auto i = 0; i < fixed_width_col_cnt_; ++i) {
-    partition_validity_addrs_[i].resize(num_partitions_, nullptr);
-    partition_fixed_width_value_addrs_[i].resize(num_partitions_, nullptr);
-    partition_buffers_[i].resize(num_partitions_);
-  }
-  partition_binary_builders_.resize(binary_array_idx_.size());
-  for (auto i = 0; i < binary_array_idx_.size(); ++i) {
-    partition_binary_builders_[i].resize(num_partitions_);
-  }
-  partition_large_binary_builders_.resize(large_binary_array_idx_.size());
-  for (auto i = 0; i < large_binary_array_idx_.size(); ++i) {
-    partition_large_binary_builders_[i].resize(num_partitions_);
-  }
+  std::for_each(partition_fixed_width_value_addrs_.begin(),partition_fixed_width_value_addrs_.end(),
+      [this](std::vector<uint8_t *>& v){
+        v.resize(num_partitions_, nullptr);
+      });
+  std::for_each(partition_buffers_.begin(),partition_buffers_.end(),
+      [this](std::vector<arrow::BufferVector>& v){
+        v.resize(num_partitions_);
+      });
+
   partition_list_builders_.resize(list_array_idx_.size());
   for (auto i = 0; i < list_array_idx_.size(); ++i) {
     partition_list_builders_[i].resize(num_partitions_);
@@ -466,45 +462,50 @@ arrow::Status Splitter::CacheRecordBatch(int32_t partition_id, bool reset_buffer
     // already filled
     auto fixed_width_idx = 0;
     auto binary_idx = 0;
-    auto large_binary_idx = 0;
     auto list_idx = 0;
     auto num_fields = schema_->num_fields();
     auto num_rows = partition_buffer_idx_base_[partition_id];
     auto buffer_sizes = 0;
+    int8_t sizeof_binary_offset=-1;
     std::vector<std::shared_ptr<arrow::Array>> arrays(num_fields);
     for (int i = 0; i < num_fields; ++i) {
       switch (column_type_id_[i]->id()) {
         case arrow::BinaryType::type_id:
-        case arrow::StringType::type_id: {
-          auto& builder = partition_binary_builders_[binary_idx][partition_id];
+        case arrow::StringType::type_id:
+          sizeof_binary_offset=4;
+        case arrow::LargeBinaryType::type_id:
+        case arrow::LargeStringType::type_id:{
+          if(sizeof_binary_offset==-1)
+            sizeof_binary_offset=8;
+
+          auto buffers = partition_buffers_[fixed_width_col_cnt_+binary_idx][partition_id];
+          //validity buffer
+          if (buffers[0] != nullptr) {
+            buffers[0] =
+                arrow::SliceBuffer(buffers[0], 0, arrow::BitUtil::BytesForBits(num_rows));
+          }
+          //offset buffer
+          if (buffers[1] != nullptr) {
+              buffers[1] = arrow::SliceBuffer(
+                  buffers[1], 0,
+                  (num_rows+1) * sizeof_binary_offset);
+          }
+          //value buffer
+          if (buffers[2] != nullptr) {
+            ARROW_CHECK_NE(buffers[1],nullptr);
+            buffers[2] = arrow::SliceBuffer(
+                buffers[2], 0,
+                );
+          }
+
+          arrays[i] = arrow::MakeArray(arrow::ArrayData::Make(
+              schema_->field(i)->type(), num_rows, {buffers[0], buffers[1]}));
           if (reset_buffers) {
-            RETURN_NOT_OK(builder->Finish(&arrays[i]));
-            builder->Reset();
-          } else {
-            auto data_size = builder->value_data_length();
-            RETURN_NOT_OK(builder->Finish(&arrays[i]));
-            builder->Reset();
-            RETURN_NOT_OK(builder->Reserve(num_rows));
-            RETURN_NOT_OK(builder->ReserveData(data_size));
+            partition_validity_addrs_[fixed_width_idx][partition_id] =
+                nullptr;
+            partition_fixed_width_value_addrs_[fixed_width_idx][partition_id] = nullptr;
           }
           binary_idx++;
-          break;
-        }
-        case arrow::LargeBinaryType::type_id:
-        case arrow::LargeStringType::type_id: {
-          auto& builder =
-              partition_large_binary_builders_[large_binary_idx][partition_id];
-          if (reset_buffers) {
-            RETURN_NOT_OK(builder->Finish(&arrays[i]));
-            builder->Reset();
-          } else {
-            auto data_size = builder->value_data_length();
-            RETURN_NOT_OK(builder->Finish(&arrays[i]));
-            builder->Reset();
-            RETURN_NOT_OK(builder->Reserve(num_rows));
-            RETURN_NOT_OK(builder->ReserveData(data_size));
-          }
-          large_binary_idx++;
           break;
         }
         case arrow::StructType::type_id:
