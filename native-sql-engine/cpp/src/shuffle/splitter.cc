@@ -36,13 +36,6 @@
 #include "shuffle/utils.h"
 #include "utils/macros.h"
 
-/*#if defined(COLUMNAR_PLUGIN_USE_AVX512)
-#include <immintrin.h>
-#else
-#include <xmmintrin.h>
-#endif
-*/
-
 namespace sparkcolumnarplugin {
 namespace shuffle {
 using arrow::internal::checked_cast;
@@ -72,89 +65,6 @@ std::string __m128i_toString(const __m128i var) {
 }
 
 SplitOptions SplitOptions::Defaults() { return SplitOptions(); }
-#if defined(COLUMNAR_PLUGIN_USE_AVX512)
-inline __m256i CountPartitionIdOccurrence(const std::vector<int32_t>& partition_id,
-                                          int32_t row) {
-  __m128i partid_cnt_low;
-  __m128i partid_cnt_high;
-  int32_t tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7;
-
-  partid_cnt_low = _mm_xor_si128(partid_cnt_low, partid_cnt_low);
-
-  tmp1 = (partition_id[row + 1] ^ partition_id[row]) == 0;
-  partid_cnt_low = _mm_insert_epi32(partid_cnt_low, tmp1, 1);
-
-  tmp2 = (partition_id[row + 2] ^ partition_id[row]) == 0;
-  tmp2 += (partition_id[row + 2] ^ partition_id[row + 1]) == 0;
-  partid_cnt_low = _mm_insert_epi32(partid_cnt_low, tmp2, 2);
-
-  tmp3 = (partition_id[row + 3] ^ partition_id[row]) == 0;
-  tmp3 += (partition_id[row + 3] ^ partition_id[row + 1]) == 0;
-  tmp3 += (partition_id[row + 3] ^ partition_id[row + 2]) == 0;
-  partid_cnt_low = _mm_insert_epi32(partid_cnt_low, tmp3, 3);
-
-  tmp4 = (partition_id[row + 4] ^ partition_id[row]) == 0;
-  tmp4 += (partition_id[row + 4] ^ partition_id[row + 1]) == 0;
-  tmp4 += (partition_id[row + 4] ^ partition_id[row + 2]) == 0;
-  tmp4 += (partition_id[row + 4] ^ partition_id[row + 3]) == 0;
-  partid_cnt_high = _mm_insert_epi32(partid_cnt_high, tmp4, 0);
-
-  tmp5 = (partition_id[row + 5] ^ partition_id[row]) == 0;
-  tmp5 += (partition_id[row + 5] ^ partition_id[row + 1]) == 0;
-  tmp5 += (partition_id[row + 5] ^ partition_id[row + 2]) == 0;
-  tmp5 += (partition_id[row + 5] ^ partition_id[row + 3]) == 0;
-  tmp5 += (partition_id[row + 5] ^ partition_id[row + 4]) == 0;
-  partid_cnt_high = _mm_insert_epi32(partid_cnt_high, tmp5, 1);
-
-  tmp6 = (partition_id[row + 6] ^ partition_id[row]) == 0;
-  tmp6 += (partition_id[row + 6] ^ partition_id[row + 1]) == 0;
-  tmp6 += (partition_id[row + 6] ^ partition_id[row + 2]) == 0;
-  tmp6 += (partition_id[row + 6] ^ partition_id[row + 3]) == 0;
-  tmp6 += (partition_id[row + 6] ^ partition_id[row + 4]) == 0;
-  tmp6 += (partition_id[row + 6] ^ partition_id[row + 5]) == 0;
-  partid_cnt_high = _mm_insert_epi32(partid_cnt_high, tmp6, 2);
-
-  tmp7 = (partition_id[row + 7] ^ partition_id[row]) == 0;
-  tmp7 += (partition_id[row + 7] ^ partition_id[row + 1]) == 0;
-  tmp7 += (partition_id[row + 7] ^ partition_id[row + 2]) == 0;
-  tmp7 += (partition_id[row + 7] ^ partition_id[row + 3]) == 0;
-  tmp7 += (partition_id[row + 7] ^ partition_id[row + 4]) == 0;
-  tmp7 += (partition_id[row + 7] ^ partition_id[row + 5]) == 0;
-  tmp7 += (partition_id[row + 7] ^ partition_id[row + 6]) == 0;
-  partid_cnt_high = _mm_insert_epi32(partid_cnt_high, tmp7, 3);
-
-  __m256i partid_cnt_8x = _mm256_castsi128_si256(partid_cnt_low);
-  partid_cnt_8x = _mm256_inserti128_si256(partid_cnt_8x, partid_cnt_high, 1);
-  return partid_cnt_8x;
-}
-
-inline void PrefetchDstAddr(__m512i dst_addr_8x, int32_t scale) {
-  _mm_prefetch(
-      (void*)(_mm_extract_epi64(_mm512_extracti64x2_epi64(dst_addr_8x, 0), 0) + scale),
-      _MM_HINT_T0);
-  _mm_prefetch(
-      (void*)(_mm_extract_epi64(_mm512_extracti64x2_epi64(dst_addr_8x, 0), 1) + scale),
-      _MM_HINT_T0);
-  _mm_prefetch(
-      (void*)(_mm_extract_epi64(_mm512_extracti64x2_epi64(dst_addr_8x, 1), 0) + scale),
-      _MM_HINT_T0);
-  _mm_prefetch(
-      (void*)(_mm_extract_epi64(_mm512_extracti64x2_epi64(dst_addr_8x, 1), 1) + scale),
-      _MM_HINT_T0);
-  _mm_prefetch(
-      (void*)(_mm_extract_epi64(_mm512_extracti64x2_epi64(dst_addr_8x, 2), 0) + scale),
-      _MM_HINT_T0);
-  _mm_prefetch(
-      (void*)(_mm_extract_epi64(_mm512_extracti64x2_epi64(dst_addr_8x, 2), 1) + scale),
-      _MM_HINT_T0);
-  _mm_prefetch(
-      (void*)(_mm_extract_epi64(_mm512_extracti64x2_epi64(dst_addr_8x, 3), 0) + scale),
-      _MM_HINT_T0);
-  _mm_prefetch(
-      (void*)(_mm_extract_epi64(_mm512_extracti64x2_epi64(dst_addr_8x, 3), 1) + scale),
-      _MM_HINT_T0);
-}
-#endif
 
 class Splitter::PartitionWriter {
  public:
@@ -333,11 +243,9 @@ arrow::Status Splitter::Init() {
     switch (column_type_id_[i]->id()) {
       case arrow::BinaryType::type_id:
       case arrow::StringType::type_id:
-        binary_array_idx_.push_back(i);
-        break;
       case arrow::LargeBinaryType::type_id:
       case arrow::LargeStringType::type_id:
-        large_binary_array_idx_.push_back(i);
+        binary_array_idx_.push_back(i);
         break;
       case arrow::StructType::type_id:
       case arrow::MapType::type_id:
@@ -348,22 +256,30 @@ arrow::Status Splitter::Init() {
       case arrow::NullType::type_id:
         break;
       default:
-        fixed_width_array_idx_.push_back(i);
+        array_idx_.push_back(i);
         break;
     }
   }
+  fixed_width_col_cnt_ = array_idx_.size();
 
-  auto num_fixed_width = fixed_width_array_idx_.size();
-  partition_fixed_width_validity_addrs_.resize(num_fixed_width);
-  partition_fixed_width_value_addrs_.resize(num_fixed_width);
-  partition_fixed_width_buffers_.resize(num_fixed_width);
-  binary_array_empirical_size_.resize(binary_array_idx_.size());
-  large_binary_array_empirical_size_.resize(large_binary_array_idx_.size());
-  input_fixed_width_has_null_.resize(num_fixed_width, false);
-  for (auto i = 0; i < num_fixed_width; ++i) {
-    partition_fixed_width_validity_addrs_[i].resize(num_partitions_, nullptr);
+  array_idx_.insert( array_idx_.end(), binary_array_idx_.begin(), binary_array_idx_.end() );
+  
+  uint32_t array_cnt = array_idx_.size();
+
+  partition_validity_addrs_.resize(array_cnt);
+  partition_fixed_width_value_addrs_.resize(fixed_width_col_cnt_);
+  partition_buffers_.resize(array_cnt);
+  binary_array_empirical_size_.resize(array_cnt-fixed_width_col_cnt_);
+  input_fixed_width_has_null_.resize(array_cnt, false);
+
+  std::for_each(partition_validity_addrs_.begin(),partition_validity_addrs_.end(),
+      [](std::vector<uint8_t *>& ){
+
+      });
+  for (auto i = 0; i < fixed_width_col_cnt_; ++i) {
+    partition_validity_addrs_[i].resize(num_partitions_, nullptr);
     partition_fixed_width_value_addrs_[i].resize(num_partitions_, nullptr);
-    partition_fixed_width_buffers_[i].resize(num_partitions_);
+    partition_buffers_[i].resize(num_partitions_);
   }
   partition_binary_builders_.resize(binary_array_idx_.size());
   for (auto i = 0; i < binary_array_idx_.size(); ++i) {
@@ -510,7 +426,7 @@ arrow::Status Splitter::Stop() {
   }
   this->combine_buffer_.reset();
   this->schema_payload_.reset();
-  partition_fixed_width_buffers_.clear();
+  partition_buffers_.clear();
 
   // close data file output Stream
   RETURN_NOT_OK(data_file_os_->Close());
@@ -613,7 +529,7 @@ arrow::Status Splitter::CacheRecordBatch(int32_t partition_id, bool reset_buffer
           break;
         }
         default: {
-          auto buffers = partition_fixed_width_buffers_[fixed_width_idx][partition_id];
+          auto buffers = partition_buffers_[fixed_width_idx][partition_id];
           if (buffers[0] != nullptr) {
             buffers[0] =
                 arrow::SliceBuffer(buffers[0], 0, arrow::BitUtil::BytesForBits(num_rows));
@@ -631,7 +547,7 @@ arrow::Status Splitter::CacheRecordBatch(int32_t partition_id, bool reset_buffer
           arrays[i] = arrow::MakeArray(arrow::ArrayData::Make(
               schema_->field(i)->type(), num_rows, {buffers[0], buffers[1]}));
           if (reset_buffers) {
-            partition_fixed_width_validity_addrs_[fixed_width_idx][partition_id] =
+            partition_validity_addrs_[fixed_width_idx][partition_id] =
                 nullptr;
             partition_fixed_width_value_addrs_[fixed_width_idx][partition_id] = nullptr;
           }
@@ -784,12 +700,12 @@ arrow::Status Splitter::AllocatePartitionBuffers(int32_t partition_id, int32_t n
         partition_fixed_width_value_addrs_[fixed_width_idx][partition_id] =
             new_value_buffers[fixed_width_idx]->mutable_data();
         if (input_fixed_width_has_null_[fixed_width_idx]) {
-          partition_fixed_width_validity_addrs_[fixed_width_idx][partition_id] =
+          partition_validity_addrs_[fixed_width_idx][partition_id] =
               new_validity_buffers[fixed_width_idx]->mutable_data();
         } else {
-          partition_fixed_width_validity_addrs_[fixed_width_idx][partition_id] = nullptr;
+          partition_validity_addrs_[fixed_width_idx][partition_id] = nullptr;
         }
-        partition_fixed_width_buffers_[fixed_width_idx][partition_id] = {
+        partition_buffers_[fixed_width_idx][partition_id] = {
             std::move(new_validity_buffers[fixed_width_idx]),
             std::move(new_value_buffers[fixed_width_idx])};
         fixed_width_idx++;
@@ -851,8 +767,8 @@ arrow::Status Splitter::SpillPartition(int32_t partition_id) {
   TIME_NANO_OR_RAISE(total_spill_time_, partition_writer_[partition_id]->Spill());
 
   // reset validity buffer after spill
-  std::for_each(partition_fixed_width_buffers_.begin(),
-                partition_fixed_width_buffers_.end(),
+  std::for_each(partition_buffers_.begin(),
+                partition_buffers_.end(),
                 [partition_id](std::vector<arrow::BufferVector>& bufs) {
                   if (bufs[partition_id][0] != nullptr) {
                     // initialize all true once allocated
@@ -937,8 +853,8 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
   size_per_row = std::accumulate(large_binary_array_empirical_size_.begin(),
                                  large_binary_array_empirical_size_.end(), size_per_row);
 
-  for (auto col = 0; col < fixed_width_array_idx_.size(); ++col) {
-    auto col_idx = fixed_width_array_idx_[col];
+  for (auto col = 0; col < array_idx_.size(); ++col) {
+    auto col_idx = array_idx_[col];
     size_per_row += arrow::bit_width(column_type_id_[col_idx]->id()) / 8;
     // check input_fixed_width_has_null_[col] is cheaper than GetNullCount()
     //  once input_fixed_width_has_null_ is set to true, we didn't reset it after spill
@@ -992,12 +908,8 @@ arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {
     }
   }
 // now start to split the record batch
-#if defined(COLUMNAR_PLUGIN_USE_AVX512)
-  RETURN_NOT_OK(SplitFixedWidthValueBufferAVX(rb));
-#else
   RETURN_NOT_OK(SplitFixedWidthValueBuffer(rb));
-#endif
-  RETURN_NOT_OK(SplitFixedWidthValidityBuffer(rb));
+  RETURN_NOT_OK(SplitValidityBuffer(rb));
   RETURN_NOT_OK(SplitBinaryArray(rb));
   RETURN_NOT_OK(SplitLargeBinaryArray(rb));
   RETURN_NOT_OK(SplitListArray(rb));
@@ -1015,10 +927,10 @@ arrow::Status Splitter::SplitFixedWidthValueBuffer(const arrow::RecordBatch& rb)
   int64_t row;
   std::vector<row_offset_type> partition_buffer_idx_offset;
 
-  for (auto col = 0; col < fixed_width_array_idx_.size(); ++col) {
+  for (auto col = 0; col < array_idx_.size(); ++col) {
     const auto& dst_addrs = partition_fixed_width_value_addrs_[col];
     std::copy(dst_addrs.begin(), dst_addrs.end(), partition_buffer_idx_offset_.begin());
-    auto col_idx = fixed_width_array_idx_[col];
+    auto col_idx = array_idx_[col];
     auto src_addr = const_cast<uint8_t*>(rb.column_data(col_idx)->buffers[1]->data());
 
     switch (arrow::bit_width(column_type_id_[col_idx]->id())) {
@@ -1194,179 +1106,13 @@ arrow::Status Splitter::SplitFixedWidthValueBuffer(const arrow::RecordBatch& rb)
   return arrow::Status::OK();
 }
 
-#if defined(COLUMNAR_PLUGIN_USE_AVX512)
-arrow::Status Splitter::SplitFixedWidthValueBufferAVX(const arrow::RecordBatch& rb) {
-  __m256i inc_one = _mm256_load_si256((__m256i*)(ONES));
-
-  const auto num_rows = rb.num_rows();
-  for (auto col = 0; col < fixed_width_array_idx_.size(); ++col) {
-    std::fill(std::begin(partition_buffer_idx_offset_),
-              std::end(partition_buffer_idx_offset_), 0);
-    auto col_idx = fixed_width_array_idx_[col];
-    auto src_addr = const_cast<uint8_t*>(rb.column_data(col_idx)->buffers[1]->data());
-    const auto& dst_addrs = partition_fixed_width_value_addrs_[col];
-
-    switch (column_type_id_[col_idx]) {
-#define PROCESS(SHUFFLE_TYPE, CTYPE)                                           \
-  case Type::SHUFFLE_TYPE:                                                     \
-    for (auto row = 0; row < num_rows; ++row) {                                \
-      auto pid = partition_id_[row];                                           \
-      auto dst_offset =                                                        \
-          partition_buffer_idx_base_[pid] + partition_buffer_idx_offset_[pid]; \
-      reinterpret_cast<CTYPE*>(dst_addrs[pid])[dst_offset] =                   \
-          reinterpret_cast<CTYPE*>(src_addr)[row];                             \
-      partition_buffer_idx_offset_[pid]++;                                     \
-      _mm_prefetch(&reinterpret_cast<CTYPE*>(dst_addrs[pid])[dst_offset + 1],  \
-                   _MM_HINT_T0);                                               \
-    }                                                                          \
-    break;
-      PROCESS(SHUFFLE_1BYTE, uint8_t)
-      PROCESS(SHUFFLE_2BYTE, uint16_t)
-#undef PROCESS
-      case Type::SHUFFLE_4BYTE: {
-        auto rows = num_rows - num_rows % 8;
-        auto src_addr_32 = reinterpret_cast<uint32_t*>(src_addr);
-        for (auto row = 0; row < rows; row += 8) {
-          __m256i partid_cnt_8x = CountPartitionIdOccurrence(partition_id_, row);
-
-          // partition id is 32 bit, 8 partition id
-          __m256i partid_8x = _mm256_loadu_si256((__m256i*)(partition_id_.data() + row));
-
-          // dst_base and dst_offset are 32 bit
-          __m256i dst_idx_base_8x =
-              _mm256_i32gather_epi32(partition_buffer_idx_base_.data(), partid_8x, 4);
-          __m256i dst_idx_offset_8x =
-              _mm256_i32gather_epi32(partition_buffer_idx_offset_.data(), partid_8x, 4);
-          dst_idx_offset_8x = _mm256_add_epi32(dst_idx_offset_8x, partid_cnt_8x);
-          __m256i dst_idx_8x = _mm256_add_epi32(dst_idx_base_8x, dst_idx_offset_8x);
-
-          // dst base address is 64 bit
-          __m512i dst_addr_base_8x =
-              _mm512_i32gather_epi64(partid_8x, dst_addrs.data(), 8);
-
-          // calculate dst address, dst_addr = dst_base_addr + dst_idx*4
-          //_mm512_cvtepu32_epi64: zero extend dst_offset 32bit -> 64bit
-          //_mm512_slli_epi64(_, 2): each 64bit dst_offset << 2
-          __m512i dst_addr_offset_8x =
-              _mm512_slli_epi64(_mm512_cvtepu32_epi64(dst_idx_8x), 2);
-          __m512i dst_addr_8x = _mm512_add_epi64(dst_addr_base_8x, dst_addr_offset_8x);
-
-          // source value is 32 bit
-          __m256i src_val_8x = _mm256_loadu_si256((__m256i*)(src_addr_32 + row));
-
-          // scatter
-          _mm512_i64scatter_epi32(nullptr, dst_addr_8x, src_val_8x, 1);
-
-          // update partition_buffer_idx_offset_
-          partid_cnt_8x = _mm256_add_epi32(partid_cnt_8x, inc_one);
-          for (int i = 0; i < 8; ++i) {
-            partition_buffer_idx_offset_[partition_id_[row + i]]++;
-          }
-
-          PrefetchDstAddr(dst_addr_8x, 4);
-        }
-        for (auto row = rows; row < num_rows; ++row) {
-          auto pid = partition_id_[row];
-          reinterpret_cast<uint32_t*>(dst_addrs[pid])[partition_buffer_idx_base_[pid] +
-                                                      partition_buffer_idx_offset_[pid]] =
-              (src_addr_32)[row];
-          partition_buffer_idx_offset_[pid]++;
-        }
-      } break;
-      case Type::SHUFFLE_8BYTE: {
-        auto rows = num_rows - num_rows % 8;
-        auto src_addr_64 = reinterpret_cast<uint64_t*>(src_addr);
-        for (auto row = 0; row < rows; row += 8) {
-          __m256i partid_cnt_8x = CountPartitionIdOccurrence(partition_id_, row);
-
-          // partition id is 32 bit, 8 partition id
-          __m256i partid_8x = _mm256_loadu_si256((__m256i*)(partition_id_.data() + row));
-
-          // dst_base and dst_offset are 32 bit
-          __m256i dst_idx_base_8x =
-              _mm256_i32gather_epi32(partition_buffer_idx_base_.data(), partid_8x, 4);
-          __m256i dst_idx_offset_8x =
-              _mm256_i32gather_epi32(partition_buffer_idx_offset_.data(), partid_8x, 4);
-          dst_idx_offset_8x = _mm256_add_epi32(dst_idx_offset_8x, partid_cnt_8x);
-          __m256i dst_idx_8x = _mm256_add_epi32(dst_idx_base_8x, dst_idx_offset_8x);
-
-          // dst base address is 64 bit
-          __m512i dst_addr_base_8x =
-              _mm512_i32gather_epi64(partid_8x, dst_addrs.data(), 8);
-
-          // calculate dst address, dst_addr = dst_base_addr + dst_idx*8
-          //_mm512_cvtepu32_epi64: zero extend dst_offset 32bit -> 64bit
-          //_mm512_slli_epi64(_, 3): each 64bit dst_offset << 3
-          __m512i dst_addr_offset_8x =
-              _mm512_slli_epi64(_mm512_cvtepu32_epi64(dst_idx_8x), 3);
-          __m512i dst_addr_8x = _mm512_add_epi64(dst_addr_base_8x, dst_addr_offset_8x);
-
-          // source value is 64 bit
-          __m512i src_val_8x = _mm512_loadu_si512((__m512i*)(src_addr_64 + row));
-
-          // scatter
-          _mm512_i64scatter_epi64(nullptr, dst_addr_8x, src_val_8x, 1);
-
-          // update partition_buffer_idx_offset_
-          partid_cnt_8x = _mm256_add_epi32(partid_cnt_8x, inc_one);
-          for (int i = 0; i < 8; ++i) {
-            partition_buffer_idx_offset_[partition_id_[row + i]]++;
-          }
-
-          PrefetchDstAddr(dst_addr_8x, 8);
-        }
-        // handle the rest
-        for (auto row = rows; row < num_rows; ++row) {
-          auto pid = partition_id_[row];
-          reinterpret_cast<uint64_t*>(dst_addrs[pid])[partition_buffer_idx_base_[pid] +
-                                                      partition_buffer_idx_offset_[pid]] =
-              (src_addr_64)[row];
-          partition_buffer_idx_offset_[pid]++;
-        }
-      } break;
-      case Type::SHUFFLE_DECIMAL128:
-        for (auto row = 0; row < num_rows; ++row) {
-          auto pid = partition_id_[row];
-          auto dst_offset =
-              (partition_buffer_idx_base_[pid] + partition_buffer_idx_offset_[pid]) << 1;
-          reinterpret_cast<uint64_t*>(dst_addrs[pid])[dst_offset] =
-              reinterpret_cast<uint64_t*>(src_addr)[row << 1];
-          reinterpret_cast<uint64_t*>(dst_addrs[pid])[dst_offset | 1] =
-              reinterpret_cast<uint64_t*>(src_addr)[row << 1 | 1];
-          partition_buffer_idx_offset_[pid]++;
-          _mm_prefetch(&reinterpret_cast<uint64_t*>(dst_addrs[pid])[dst_offset + 2],
-                       _MM_HINT_T0);
-        }
-        break;
-      case Type::SHUFFLE_BIT:
-        for (auto row = 0; row < num_rows; ++row) {
-          auto pid = partition_id_[row];
-          auto dst_offset =
-              partition_buffer_idx_base_[pid] + partition_buffer_idx_offset_[pid];
-          dst_addrs[pid][dst_offset >> 3] ^=
-              (dst_addrs[pid][dst_offset >> 3] >> (dst_offset & 7) ^
-               src_addr[row >> 3] >> (row & 7))
-              << (dst_offset & 7);
-          partition_buffer_idx_offset_[pid]++;
-        }
-        break;
-      default:
-        return arrow::Status::Invalid("Column type " +
-                                      schema_->field(col_idx)->type()->ToString() +
-                                      " is not fixed width");
-    }
-  }
-  return arrow::Status::OK();
-}
-#endif
-
-arrow::Status Splitter::SplitFixedWidthValidityBuffer(const arrow::RecordBatch& rb) {
+arrow::Status Splitter::SplitValidityBuffer(const arrow::RecordBatch& rb) {
   const auto num_rows = rb.num_rows();
   std::vector<row_offset_type> partition_buffer_idx_offset;
 
-  for (auto col = 0; col < fixed_width_array_idx_.size(); ++col) {
-    auto col_idx = fixed_width_array_idx_[col];
-    auto& dst_addrs = partition_fixed_width_validity_addrs_[col];
+  for (auto col = 0; col < array_idx_.size(); ++col) {
+    auto col_idx = array_idx_[col];
+    auto& dst_addrs = partition_validity_addrs_[col];
     if (rb.column_data(col_idx)->GetNullCount() > 0) {
       // there is Null count
       for (auto pid = 0; pid < num_partitions_; ++pid) {
@@ -1380,7 +1126,7 @@ arrow::Status Splitter::SplitFixedWidthValidityBuffer(const arrow::RecordBatch& 
           ARROW_RETURN_NOT_OK(status);
           dst_addrs[pid] = const_cast<uint8_t*>(validity_buffer->data());
           memset(validity_buffer->mutable_data(), 0xff, validity_buffer->capacity());
-          partition_fixed_width_buffers_[col][pid][0] = std::move(validity_buffer);
+          partition_buffers_[col][pid][0] = std::move(validity_buffer);
         }
       }
       auto src_addr = const_cast<uint8_t*>(rb.column_data(col_idx)->buffers[0]->data());

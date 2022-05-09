@@ -36,6 +36,14 @@ namespace sparkcolumnarplugin {
 namespace shuffle {
 
 class Splitter {
+
+ protected:
+ struct BinaryBuff{
+   uint8_t* valueptr;
+   uint8_t* offsetptr;
+   uint64_t value_capacity;
+ };
+
  public:
   static arrow::Result<std::shared_ptr<Splitter>> Make(
       const std::string& short_name, std::shared_ptr<arrow::Schema> schema,
@@ -128,11 +136,7 @@ class Splitter {
 
   arrow::Status SplitFixedWidthValueBuffer(const arrow::RecordBatch& rb);
 
-#if defined(COLUMNAR_PLUGIN_USE_AVX512)
-  arrow::Status SplitFixedWidthValueBufferAVX(const arrow::RecordBatch& rb);
-#endif
-
-  arrow::Status SplitFixedWidthValidityBuffer(const arrow::RecordBatch& rb);
+  arrow::Status SplitValidityBuffer(const arrow::RecordBatch& rb);
 
   arrow::Status SplitBinaryArray(const arrow::RecordBatch& rb);
 
@@ -187,13 +191,15 @@ class Splitter {
   // partid
   std::vector<std::shared_ptr<PartitionWriter>> partition_writer_;
   // col partid
-  std::vector<std::vector<uint8_t*>> partition_fixed_width_validity_addrs_;
+  std::vector<std::vector<uint8_t*>> partition_validity_addrs_;
 
   // col partid
   std::vector<std::vector<uint8_t*>> partition_fixed_width_value_addrs_;
   // col partid
+  std::vector<std::vector<BinaryBuff>> partition_binary_addrs_;
+  // col partid
   std::vector<std::vector<std::vector<std::shared_ptr<arrow::Buffer>>>>
-      partition_fixed_width_buffers_;
+      partition_buffers_;
   // col partid
   std::vector<std::vector<std::shared_ptr<arrow::BinaryBuilder>>>
       partition_binary_builders_;
@@ -213,12 +219,12 @@ class Splitter {
   // partid
   std::vector<int64_t> partition_cached_recordbatch_size_;  // in bytes
 
-  // col
-  std::vector<int32_t> fixed_width_array_idx_;
+  // col fixed + binary
+  std::vector<int32_t> array_idx_;
+  uint16_t fixed_width_col_cnt_;
+
   // col
   std::vector<int32_t> binary_array_idx_;
-  // col
-  std::vector<int32_t> large_binary_array_idx_;
   // col
   std::vector<int32_t> list_array_idx_;
   // col
