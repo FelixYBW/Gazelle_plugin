@@ -140,8 +140,6 @@ class Splitter {
 
   arrow::Status SplitBinaryArray(const arrow::RecordBatch& rb);
 
-  arrow::Status SplitLargeBinaryArray(const arrow::RecordBatch& rb);
-
   arrow::Status SplitListArray(const arrow::RecordBatch& rb);
 
   arrow::Status AllocateBufferFromPool(std::shared_ptr<arrow::Buffer>& buffer,
@@ -218,19 +216,15 @@ class Splitter {
   uint16_t fixed_width_col_cnt_;
 
   // col
-  std::vector<int32_t> binary_array_idx_;
-  // col
   std::vector<int32_t> list_array_idx_;
   // col
 
   bool empirical_size_calculated_ = false;
   // col
-  std::vector<int32_t> binary_array_empirical_size_;
-  // col
-  std::vector<int32_t> large_binary_array_empirical_size_;
+  std::vector<uint64_t> binary_array_empirical_size_;
 
   // col
-  std::vector<bool> input_fixed_width_has_null_;
+  std::vector<bool> input_has_null_;
 
   // updated for each input record batch
   // col; value is partition number, part_num < 64k
