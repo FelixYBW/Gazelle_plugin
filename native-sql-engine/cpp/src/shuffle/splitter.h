@@ -39,6 +39,15 @@ class Splitter {
 
  protected:
  struct BinaryBuff{
+   BinaryBuff(uint8_t* v, uint8_t* o, uint64_t c)
+        :valueptr(v),
+        offsetptr(o),
+        value_capacity(c){}
+   BinaryBuff()
+        :valueptr(nullptr),
+        offsetptr(nullptr),
+        value_capacity(0){}
+
    uint8_t* valueptr;
    uint8_t* offsetptr;
    uint64_t value_capacity;
@@ -134,11 +143,19 @@ class Splitter {
 
   arrow::Status DoSplit(const arrow::RecordBatch& rb);
 
+  template <typename T>
+  arrow::Status SplitFixedType(const uint8_t* src_addr,
+                              const std::vector<uint8_t*>& dst_addrs);
+
   arrow::Status SplitFixedWidthValueBuffer(const arrow::RecordBatch& rb);
 
   arrow::Status SplitValidityBuffer(const arrow::RecordBatch& rb);
 
   arrow::Status SplitBinaryArray(const arrow::RecordBatch& rb);
+
+  template <typename T>
+  arrow::Status SplitBinaryType(const uint8_t* src_addr, const T* src_offset_addr,
+                              const std::vector<BinaryBuff>& dst_addrs);
 
   arrow::Status SplitListArray(const arrow::RecordBatch& rb);
 
@@ -193,8 +210,11 @@ class Splitter {
 
   // col partid
   std::vector<std::vector<uint8_t*>> partition_fixed_width_value_addrs_;
-  // col partid
+  // col partid, 24 bytes each
   std::vector<std::vector<BinaryBuff>> partition_binary_addrs_;
+  // temp array to hold the destination pointer
+  std::vector<BinaryBuff> partition_binary_buffer_idx_offset_;
+
   // col partid
   std::vector<std::vector<std::vector<std::shared_ptr<arrow::Buffer>>>>
       partition_buffers_;
