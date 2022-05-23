@@ -73,89 +73,6 @@ std::string __m128i_toString(const __m128i var) {
 }
 
 SplitOptions SplitOptions::Defaults() { return SplitOptions(); }
-#if defined(COLUMNAR_PLUGIN_USE_AVX512)
-inline __m256i CountPartitionIdOccurrence(const std::vector<int32_t>& partition_id,
-                                          int32_t row) {
-  __m128i partid_cnt_low;
-  __m128i partid_cnt_high;
-  int32_t tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7;
-
-  partid_cnt_low = _mm_xor_si128(partid_cnt_low, partid_cnt_low);
-
-  tmp1 = (partition_id[row + 1] ^ partition_id[row]) == 0;
-  partid_cnt_low = _mm_insert_epi32(partid_cnt_low, tmp1, 1);
-
-  tmp2 = (partition_id[row + 2] ^ partition_id[row]) == 0;
-  tmp2 += (partition_id[row + 2] ^ partition_id[row + 1]) == 0;
-  partid_cnt_low = _mm_insert_epi32(partid_cnt_low, tmp2, 2);
-
-  tmp3 = (partition_id[row + 3] ^ partition_id[row]) == 0;
-  tmp3 += (partition_id[row + 3] ^ partition_id[row + 1]) == 0;
-  tmp3 += (partition_id[row + 3] ^ partition_id[row + 2]) == 0;
-  partid_cnt_low = _mm_insert_epi32(partid_cnt_low, tmp3, 3);
-
-  tmp4 = (partition_id[row + 4] ^ partition_id[row]) == 0;
-  tmp4 += (partition_id[row + 4] ^ partition_id[row + 1]) == 0;
-  tmp4 += (partition_id[row + 4] ^ partition_id[row + 2]) == 0;
-  tmp4 += (partition_id[row + 4] ^ partition_id[row + 3]) == 0;
-  partid_cnt_high = _mm_insert_epi32(partid_cnt_high, tmp4, 0);
-
-  tmp5 = (partition_id[row + 5] ^ partition_id[row]) == 0;
-  tmp5 += (partition_id[row + 5] ^ partition_id[row + 1]) == 0;
-  tmp5 += (partition_id[row + 5] ^ partition_id[row + 2]) == 0;
-  tmp5 += (partition_id[row + 5] ^ partition_id[row + 3]) == 0;
-  tmp5 += (partition_id[row + 5] ^ partition_id[row + 4]) == 0;
-  partid_cnt_high = _mm_insert_epi32(partid_cnt_high, tmp5, 1);
-
-  tmp6 = (partition_id[row + 6] ^ partition_id[row]) == 0;
-  tmp6 += (partition_id[row + 6] ^ partition_id[row + 1]) == 0;
-  tmp6 += (partition_id[row + 6] ^ partition_id[row + 2]) == 0;
-  tmp6 += (partition_id[row + 6] ^ partition_id[row + 3]) == 0;
-  tmp6 += (partition_id[row + 6] ^ partition_id[row + 4]) == 0;
-  tmp6 += (partition_id[row + 6] ^ partition_id[row + 5]) == 0;
-  partid_cnt_high = _mm_insert_epi32(partid_cnt_high, tmp6, 2);
-
-  tmp7 = (partition_id[row + 7] ^ partition_id[row]) == 0;
-  tmp7 += (partition_id[row + 7] ^ partition_id[row + 1]) == 0;
-  tmp7 += (partition_id[row + 7] ^ partition_id[row + 2]) == 0;
-  tmp7 += (partition_id[row + 7] ^ partition_id[row + 3]) == 0;
-  tmp7 += (partition_id[row + 7] ^ partition_id[row + 4]) == 0;
-  tmp7 += (partition_id[row + 7] ^ partition_id[row + 5]) == 0;
-  tmp7 += (partition_id[row + 7] ^ partition_id[row + 6]) == 0;
-  partid_cnt_high = _mm_insert_epi32(partid_cnt_high, tmp7, 3);
-
-  __m256i partid_cnt_8x = _mm256_castsi128_si256(partid_cnt_low);
-  partid_cnt_8x = _mm256_inserti128_si256(partid_cnt_8x, partid_cnt_high, 1);
-  return partid_cnt_8x;
-}
-
-inline void PrefetchDstAddr(__m512i dst_addr_8x, int32_t scale) {
-  _mm_prefetch(
-      (void*)(_mm_extract_epi64(_mm512_extracti64x2_epi64(dst_addr_8x, 0), 0) + scale),
-      _MM_HINT_T0);
-  _mm_prefetch(
-      (void*)(_mm_extract_epi64(_mm512_extracti64x2_epi64(dst_addr_8x, 0), 1) + scale),
-      _MM_HINT_T0);
-  _mm_prefetch(
-      (void*)(_mm_extract_epi64(_mm512_extracti64x2_epi64(dst_addr_8x, 1), 0) + scale),
-      _MM_HINT_T0);
-  _mm_prefetch(
-      (void*)(_mm_extract_epi64(_mm512_extracti64x2_epi64(dst_addr_8x, 1), 1) + scale),
-      _MM_HINT_T0);
-  _mm_prefetch(
-      (void*)(_mm_extract_epi64(_mm512_extracti64x2_epi64(dst_addr_8x, 2), 0) + scale),
-      _MM_HINT_T0);
-  _mm_prefetch(
-      (void*)(_mm_extract_epi64(_mm512_extracti64x2_epi64(dst_addr_8x, 2), 1) + scale),
-      _MM_HINT_T0);
-  _mm_prefetch(
-      (void*)(_mm_extract_epi64(_mm512_extracti64x2_epi64(dst_addr_8x, 3), 0) + scale),
-      _MM_HINT_T0);
-  _mm_prefetch(
-      (void*)(_mm_extract_epi64(_mm512_extracti64x2_epi64(dst_addr_8x, 3), 1) + scale),
-      _MM_HINT_T0);
-}
-#endif
 
 class Splitter::PartitionWriter {
  public:
@@ -812,7 +729,7 @@ arrow::Status Splitter::AllocateNew(int32_t partition_id, int32_t new_size) {
               << std::to_string(++retry) << " retry to allocate new buffer for partition "
               << std::to_string(partition_id) << std::endl;
     int64_t spilled_size;
-    ARROW_ASSIGN_OR_RAISE(auto partition_to_spill, SpillLargestPartition(&spilled_size));
+    ARROW_ASSIGN_OR_RAISE(auto partition_to_spill, SpillPartitions(&spilled_size));
     if (partition_to_spill == -1) {
       std::cout << "Failed to allocate new buffer for partition "
                 << std::to_string(partition_id) << ". No partition buffer to spill."
@@ -836,7 +753,7 @@ arrow::Status Splitter::SpillFixedSize(int64_t size, int64_t* actual) {
     try_count++;
     int64_t single_call_spilled;
     ARROW_ASSIGN_OR_RAISE(int32_t spilled_partition_id,
-                          SpillLargestPartition(&single_call_spilled))
+                          SpillPartitions(&single_call_spilled))
     if (spilled_partition_id == -1) {
       break;
     }
@@ -867,27 +784,15 @@ arrow::Status Splitter::SpillPartition(int32_t partition_id) {
   return arrow::Status::OK();
 }
 
-arrow::Result<int32_t> Splitter::SpillLargestPartition(int64_t* size) {
+arrow::Result<int32_t> Splitter::SpillPartitions(int64_t* size) {
   // spill the largest partition
-  auto max_size = 0;
+  *size = 0;
   int32_t partition_to_spill = -1;
   for (auto i = 0; i < num_partitions_; ++i) {
-    if (partition_cached_recordbatch_size_[i] > max_size) {
-      max_size = partition_cached_recordbatch_size_[i];
-      partition_to_spill = i;
-    }
-  }
-  if (partition_to_spill != -1) {
     RETURN_NOT_OK(SpillPartition(partition_to_spill));
-#ifdef DEBUG
-    std::cout << "Spilled partition " << std::to_string(partition_to_spill) << ", "
-              << std::to_string(max_size) << " bytes released" << std::endl;
-#endif
-    *size = max_size;
-  } else {
-    *size = 0;
+    *size += partition_cached_recordbatch_size_[i];
   }
-  return partition_to_spill;
+  return 0;
 }
 
 arrow::Status Splitter::DoSplit(const arrow::RecordBatch& rb) {

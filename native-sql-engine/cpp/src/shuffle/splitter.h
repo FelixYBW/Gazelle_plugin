@@ -85,7 +85,7 @@ class Splitter {
    * Spill the largest partition buffer
    * @return partition id. If no partition to spill, return -1
    */
-  arrow::Result<int32_t> SpillLargestPartition(int64_t* size);
+  arrow::Result<int32_t> SpillPartitions(int64_t* size);
 
   int64_t TotalBytesWritten() const { return total_bytes_written_; }
 

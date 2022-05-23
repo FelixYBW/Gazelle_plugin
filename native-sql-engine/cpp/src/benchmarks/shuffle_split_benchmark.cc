@@ -321,18 +321,17 @@ class BenchmarkShuffleSplit_CacheScan_Benchmark : public BenchmarkShuffleSplit {
                 const int num_partitions, SplitOptions options, benchmark::State& state) {
     std::vector<int> local_column_indices;
     local_column_indices.push_back(0);
-    /*    local_column_indices.push_back(0);
-        local_column_indices.push_back(1);
-        local_column_indices.push_back(2);
-        local_column_indices.push_back(4);
-        local_column_indices.push_back(5);
-        local_column_indices.push_back(6);
-        local_column_indices.push_back(7);*/
+    local_column_indices.push_back(1);
+    local_column_indices.push_back(2);
+    local_column_indices.push_back(4);
+    local_column_indices.push_back(5);
+    local_column_indices.push_back(6);
+    local_column_indices.push_back(7);
 
     std::shared_ptr<arrow::Schema> local_schema;
     local_schema = std::make_shared<arrow::Schema>(*schema.get());
 
-    /*    ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(15));
+        ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(15));
         ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(14));
         ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(13));
         ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(12));
@@ -341,7 +340,7 @@ class BenchmarkShuffleSplit_CacheScan_Benchmark : public BenchmarkShuffleSplit {
         ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(9));
         ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(8));
         ARROW_ASSIGN_OR_THROW(local_schema, local_schema->RemoveField(3));
-    */
+    
     if (state.thread_index() == 0) std::cout << local_schema->ToString() << std::endl;
 
     ARROW_ASSIGN_OR_THROW(splitter,
