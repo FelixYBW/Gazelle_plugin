@@ -74,14 +74,41 @@ std::string __m128i_toString(const __m128i var) {
 
 SplitOptions SplitOptions::Defaults() { return SplitOptions(); }
 
+class SpillMemoryPool : public arrow::MemoryPool
+{
+public:
+
+  explicit SpillMemoryPool(std::string spillfile)
+      : spillfile_(spillfile), length_(0) {}
+
+
+  arrow::Status Allocate(int64_t size, uint8_t** out) override {
+    
+    return arrow::Status::OK();
+  }
+
+  arrow::Status Reallocate(int64_t old_size, int64_t new_size, uint8_t** ptr) override {
+    return arrow::Status::OK();
+  }
+
+  void Free(uint8_t* buffer, int64_t size) override {
+  }
+private:
+  std::string spillfile_;
+  uint64_t length_;
+};
+
+
 class Splitter::PartitionWriter : public arrow::MemoryPool
  {
  public:
+
   explicit PartitionWriter(Splitter* splitter, int32_t partition_id)
       : splitter_(splitter), partition_id_(partition_id) {}
 
 
   arrow::Status Allocate(int64_t size, uint8_t** out) override {
+    
     return arrow::Status::OK();
   }
 
@@ -134,10 +161,11 @@ class Splitter::PartitionWriter : public arrow::MemoryPool
   int64_t bytes_spilled = 0;
   int64_t partition_length = 0;
   int64_t compress_time = 0;
+  void* spill_map_addr_ = nullptr;
 
  private:
   arrow::Status EnsureOpened() {
-    if (!spilled_file_opened_) {
+    if (!spill_map_addr_) {
       ARROW_ASSIGN_OR_RAISE(spilled_file_,
                             CreateTempShuffleFile(splitter_->NextSpilledFileDir()));
       ARROW_ASSIGN_OR_RAISE(spilled_file_os_,
@@ -237,9 +265,9 @@ arrow::Result<std::shared_ptr<Splitter>> Splitter::Make(
 
 arrow::Status Splitter::Init() {
   // partition number should be less than 64k
-  ARROW_CHECK_LE(num_partitions_, 64 * 1024);
+  ARROW_CHECK_LE(num_partitions_, 64 * 1024) << " partition number is larger than 64k";
   // split record batch size should be less than 32k
-  ARROW_CHECK_LE(options_.buffer_size, 32 * 1024);
+  ARROW_CHECK_LE(options_.buffer_size, 32 * 1024) << " partition buffer size is larger than 32k";
 
   const auto& fields = schema_->fields();
   ARROW_ASSIGN_OR_RAISE(column_type_id_, ToSplitterTypeId(schema_->fields()));
