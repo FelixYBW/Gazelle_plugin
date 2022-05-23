@@ -33,6 +33,7 @@
 #include <sstream>
 #include <string>
 #include <utility>
+#include <sys/mman.h>
 
 #include "shuffle/utils.h"
 #include "utils/macros.h"
@@ -46,72 +47,82 @@ using arrow::internal::checked_cast;
 #define SPLIT_BUFFER_SIZE 16 * 1024 * 1024
 #endif
 
-template <typename T>
-std::string __m128i_toString(const __m128i var) {
-  std::stringstream sstr;
-  T values[16 / sizeof(T)];
-  std::memcpy(values, &var, sizeof(values));  // See discussion below
-  if (sizeof(T) == 1) {
-    for (unsigned int i = 0; i < sizeof(__m128i); i++) {  // C++11: Range for also
-                                                          // possible
-      sstr << std::hex << (int)values[i] << " " << std::dec;
-    }
-  } else {
-    for (unsigned int i = 0; i < sizeof(__m128i) / sizeof(T);
-         i++) {  // C++11: Range for also possible
-      sstr << std::hex << values[i] << " " << std::dec;
-    }
-  }
-  return sstr.str();
-}
-
 SplitOptions SplitOptions::Defaults() { return SplitOptions(); }
+
+
 class SpillMemoryPool : public arrow::MemoryPool
 {
 public:
   explicit SpillMemoryPool(std::string spillfile)
       : spillfile_(spillfile), length_(0) {}
+  ~SpillMemoryPool(){
+    if(fd)
+    {
+      close(fd);
+    }
+  }
   arrow::Status Allocate(int64_t size, uint8_t** out) override {
+    if(!fd)
+    {
+      fd = open(spillfile_.data(), O_RDWR);
+      ARROW_CHECK_NE(fd,-1) << " spill file open failed ";
+    }
+    *out = reinterpret_cast<uint8_t*>(mmap(NULL, size, PROT_WRITE, MAP_SHARED, fd, length_));
+    length_+=size;
+    ARROW_CHECK_NE(*out, (void*)-1) << " spill file mmap failed";
+
     return arrow::Status::OK();
   }
   arrow::Status Reallocate(int64_t old_size, int64_t new_size, uint8_t** ptr) override {
+    length_ -= old_size;
+    void* oldptr = *ptr;
+    *ptr = reinterpret_cast<uint8_t*>(mremap(oldptr, old_size, new_size, MREMAP_MAYMOVE));
+    length_+=new_size;
+
+    ARROW_CHECK_NE(*ptr, (void*)-1) << " spill file mremap failed";
     return arrow::Status::OK();
   }
   void Free(uint8_t* buffer, int64_t size) override {
+    int rst = munmap(buffer, size);
+    ARROW_CHECK_NE(rst, -1) << " spill file munmap failed";    
   }
+
+  int64_t bytes_allocated() const override { return length_; }
+
+  int64_t max_memory() const override { return -1; }
+
+  std::string backend_name() const override { return "spill file memory pool"; }
+
+  arrow::Status map_all(int8_t** out){
+    ARROW_CHECK_GT(length_,0) << " spill file length is 0";
+    if(!fd)
+    {
+      fd = open(spillfile_.data(), O_RDWR);
+      ARROW_CHECK_NE(fd,-1) << " spill file open failed ";
+    }
+    *out = reinterpret_cast<int8_t*>(mmap(NULL, length_, PROT_WRITE, MAP_SHARED, fd, 0));
+    ARROW_CHECK_NE(*out, (void*)-1) << " spill file map_all mmap failed";
+    return arrow::Status::OK();
+  }
+  
 private:
   std::string spillfile_;
-  uint64_t length_;
+  uint64_t length_=0;
+  int fd=0;
 };
 
 
-class Splitter::PartitionWriter : public arrow::MemoryPool
- {
+class Splitter::PartitionWriter {
  public:
 
   explicit PartitionWriter(Splitter* splitter, int32_t partition_id)
       : splitter_(splitter), partition_id_(partition_id) {}
 
-
-  arrow::Status Allocate(int64_t size, uint8_t** out) override {
-    
-    return arrow::Status::OK();
-  }
-
-  arrow::Status Reallocate(int64_t old_size, int64_t new_size, uint8_t** ptr) override {
-    return arrow::Status::OK();
-  }
-
-  void Free(uint8_t* buffer, int64_t size) override {
-  }
-
-
-
   arrow::Status Spill() {
 #ifndef SKIPWRITE
     RETURN_NOT_OK(EnsureOpened());
 #endif
-    RETURN_NOT_OK(WriteRecordBatchPayload(spilled_file_os_.get(), partition_id_));
+    RETURN_NOT_OK(WriteRecordBatchPayload());
     ClearCache();
     return arrow::Status::OK();
   }
@@ -124,8 +135,7 @@ class Splitter::PartitionWriter : public arrow::MemoryPool
       RETURN_NOT_OK(WriteSchemaPayload(data_file_os.get()));
     }
 
-    if (spilled_file_opened_) {
-      RETURN_NOT_OK(spilled_file_os_->Close());
+    if (spill_pool_) {
       RETURN_NOT_OK(MergeSpilled());
     } else {
       if (splitter_->partition_cached_recordbatch_size_[partition_id_] == 0) {
@@ -133,7 +143,7 @@ class Splitter::PartitionWriter : public arrow::MemoryPool
       }
     }
 
-    RETURN_NOT_OK(WriteRecordBatchPayload(data_file_os.get(), partition_id_));
+    RETURN_NOT_OK(WriteRecordBatchPayload(data_file_os.get()));
     RETURN_NOT_OK(WriteEOS(data_file_os.get()));
     ClearCache();
 
@@ -147,31 +157,29 @@ class Splitter::PartitionWriter : public arrow::MemoryPool
   int64_t bytes_spilled = 0;
   int64_t partition_length = 0;
   int64_t compress_time = 0;
-  void* spill_map_addr_ = nullptr;
+
+  std::shared_ptr<SpillMemoryPool> spill_pool_;
 
  private:
   arrow::Status EnsureOpened() {
-    if (!spill_map_addr_) {
+    if (!spill_pool_) {
       ARROW_ASSIGN_OR_RAISE(spilled_file_,
                             CreateTempShuffleFile(splitter_->NextSpilledFileDir()));
-      ARROW_ASSIGN_OR_RAISE(spilled_file_os_,
-                            arrow::io::FileOutputStream::Open(spilled_file_, true));
-      spilled_file_opened_ = true;
+      spill_pool_ = std::make_shared<SpillMemoryPool>(spilled_file_);
     }
     return arrow::Status::OK();
   }
 
   arrow::Status MergeSpilled() {
-    ARROW_ASSIGN_OR_RAISE(
-        auto spilled_file_is_,
-        arrow::io::MemoryMappedFile::Open(spilled_file_, arrow::io::FileMode::READ));
-    // copy spilled data blocks
-    ARROW_ASSIGN_OR_RAISE(auto nbytes, spilled_file_is_->GetSize());
-    ARROW_ASSIGN_OR_RAISE(auto buffer, spilled_file_is_->Read(nbytes));
-    RETURN_NOT_OK(splitter_->data_file_os_->Write(buffer));
 
-    // close spilled file streams and delete the file
-    RETURN_NOT_OK(spilled_file_is_->Close());
+    int8_t *buffer=nullptr;
+    RETURN_NOT_OK(spill_pool_->map_all(&buffer));
+    int64_t nbytes = spill_pool_->bytes_allocated();
+
+    RETURN_NOT_OK(splitter_->data_file_os_->Write(buffer, nbytes));
+
+    spill_pool_.reset();
+
     auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
     RETURN_NOT_OK(fs->DeleteFile(spilled_file_));
     bytes_spilled += nbytes;
@@ -185,9 +193,41 @@ class Splitter::PartitionWriter : public arrow::MemoryPool
         *payload, splitter_->options_.ipc_write_options, os, &metadata_length));
     return arrow::Status::OK();
   }
+  
+  arrow::Status WriteRecordBatchPayload() {
+    int32_t metadata_length = 0;  // unused
+#ifndef SKIPWRITE
+    for (auto& payload : splitter_->partition_cached_recordbatch_[partition_id_]) {
+        // Now write the buffers
+      int64_t totalsize =
+         std::accumulate(payload->body_buffers.begin(),payload->body_buffers.end(),0L,
+         [](int64_t acc, const std::shared_ptr<arrow::Buffer>& buffer){
+            if (buffer) {
+              return acc+arrow::BitUtil::RoundUpToMultipleOf8(buffer->size());
+            }
+         });
+      std::cout << " payload.bodylength = " << payload->body_length << std::endl;
+      std::cout << " total buf size = " << totalsize << std::endl;
 
-  arrow::Status WriteRecordBatchPayload(arrow::io::OutputStream* os,
-                                        int32_t partition_id) {
+      uint8_t* buf;
+      RETURN_NOT_OK(spill_pool_->Allocate(totalsize, &buf));
+      
+      for (auto& buffer: payload->body_buffers)
+      {
+        if (buffer) {
+          int64_t size = buffer->size();
+          memcpy(buf,buffer->data(),size);
+          int64_t padding = arrow::BitUtil::RoundUpToMultipleOf8(size) - size;
+          memset(buf+buffer->size(),0,padding);
+        }
+      }
+      payload.reset();
+    }
+#endif
+    return arrow::Status::OK();
+  }
+
+  arrow::Status WriteRecordBatchPayload(arrow::io::OutputStream* os) {
     int32_t metadata_length = 0;  // unused
 #ifndef SKIPWRITE
     for (auto& payload : splitter_->partition_cached_recordbatch_[partition_id_]) {
@@ -215,9 +255,6 @@ class Splitter::PartitionWriter : public arrow::MemoryPool
   Splitter* splitter_;
   int32_t partition_id_;
   std::string spilled_file_;
-  std::shared_ptr<arrow::io::FileOutputStream> spilled_file_os_;
-
-  bool spilled_file_opened_ = false;
 };
 
 // ----------------------------------------------------------------------
