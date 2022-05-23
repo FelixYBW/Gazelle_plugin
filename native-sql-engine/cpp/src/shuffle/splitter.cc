@@ -74,10 +74,25 @@ std::string __m128i_toString(const __m128i var) {
 
 SplitOptions SplitOptions::Defaults() { return SplitOptions(); }
 
-class Splitter::PartitionWriter {
+class Splitter::PartitionWriter : public arrow::MemoryPool
+ {
  public:
   explicit PartitionWriter(Splitter* splitter, int32_t partition_id)
       : splitter_(splitter), partition_id_(partition_id) {}
+
+
+  arrow::Status Allocate(int64_t size, uint8_t** out) override {
+    return arrow::Status::OK();
+  }
+
+  arrow::Status Reallocate(int64_t old_size, int64_t new_size, uint8_t** ptr) override {
+    return arrow::Status::OK();
+  }
+
+  void Free(uint8_t* buffer, int64_t size) override {
+  }
+
+
 
   arrow::Status Spill() {
 #ifndef SKIPWRITE
