@@ -62,29 +62,57 @@ public:
     }
   }
   arrow::Status Allocate(int64_t size, uint8_t** out) override {
+
+    ARROW_CHECK_EQ(mapped_addr_,nullptr)<<"spill file is already mapped";
+    
     if(!fd)
     {
-      fd = open(spillfile_.data(), O_RDWR);
+      std::cout << "spill file is " << spillfile_ << std::endl;
+      fd = open(spillfile_.data(), O_CREAT | O_RDWR);
       ARROW_CHECK_NE(fd,-1) << " spill file open failed ";
     }
-    *out = reinterpret_cast<uint8_t*>(mmap(NULL, size, PROT_WRITE, MAP_SHARED, fd, length_));
-    length_+=size;
-    ARROW_CHECK_NE(*out, (void*)-1) << " spill file mmap failed";
+    ARROW_CHECK_NE(ftruncate(fd, length_+size),-1) << " truncate file open failed ";
+    std::cout << " mmap length = " << length_+size << std::endl;
+    mapped_addr_ = mmap(NULL, length_+size, PROT_WRITE|PROT_READ, MAP_SHARED, fd, 0);
+    
+    ARROW_CHECK_NE(mapped_addr_, (void*)-1) << " spill file mmap failed";
+
+    std::cout << " mmap addr = " << std::hex << (uint64_t) mapped_addr_ << std::dec << std::endl;
+
+    *out=(uint8_t*)mapped_addr_+length_;
+
+    length_+=size;  
 
     return arrow::Status::OK();
   }
   arrow::Status Reallocate(int64_t old_size, int64_t new_size, uint8_t** ptr) override {
+    ARROW_CHECK_NE(mapped_addr_,nullptr)<<"spill file isn't mapped";
+
     length_ -= old_size;
-    void* oldptr = *ptr;
-    *ptr = reinterpret_cast<uint8_t*>(mremap(oldptr, old_size, new_size, MREMAP_MAYMOVE));
+    
+    ARROW_CHECK_NE(ftruncate(fd, length_+new_size),-1) << " truncate file open failed ";
+
+    std::cout << " mremap length = " << length_+new_size << std::endl;
+    mapped_addr_ = reinterpret_cast<uint8_t*>(mremap(mapped_addr_, length_+old_size, length_+new_size, MREMAP_MAYMOVE));
+    ARROW_CHECK_NE(mapped_addr_, (void*)-1) << " spill file mremap failed";
+
+    *ptr = (uint8_t*)mapped_addr_+length_;
+    
     length_+=new_size;
 
-    ARROW_CHECK_NE(*ptr, (void*)-1) << " spill file mremap failed";
     return arrow::Status::OK();
   }
   void Free(uint8_t* buffer, int64_t size) override {
-    int rst = munmap(buffer, size);
+    ARROW_CHECK_NE(mapped_addr_,nullptr)<<"spill file isn't mapped";
+
+    std::cout << " munmap length = " << length_ << " addr = " << std::hex << (uint64_t) mapped_addr_ << std::dec << std::endl;
+
+    int rst = munmap(mapped_addr_, length_);
     ARROW_CHECK_NE(rst, -1) << " spill file munmap failed";    
+
+
+    mapped_addr_=nullptr;
+
   }
 
   int64_t bytes_allocated() const override { return length_; }
@@ -93,15 +121,20 @@ public:
 
   std::string backend_name() const override { return "spill file memory pool"; }
 
-  arrow::Status map_all(int8_t** out){
+  arrow::Status map_all(uint8_t** out){
     ARROW_CHECK_GT(length_,0) << " spill file length is 0";
+    ARROW_CHECK_EQ(mapped_addr_,nullptr)<<"spill file is already mapped";
+
+
     if(!fd)
     {
       fd = open(spillfile_.data(), O_RDWR);
       ARROW_CHECK_NE(fd,-1) << " spill file open failed ";
     }
-    *out = reinterpret_cast<int8_t*>(mmap(NULL, length_, PROT_WRITE, MAP_SHARED, fd, 0));
+    *out = reinterpret_cast<uint8_t*>(mmap(NULL, length_, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0));
     ARROW_CHECK_NE(*out, (void*)-1) << " spill file map_all mmap failed";
+    mapped_addr_=*out;
+
     return arrow::Status::OK();
   }
   
@@ -109,6 +142,7 @@ private:
   std::string spillfile_;
   uint64_t length_=0;
   int fd=0;
+  void* mapped_addr_;
 };
 
 
@@ -172,11 +206,12 @@ class Splitter::PartitionWriter {
 
   arrow::Status MergeSpilled() {
 
-    int8_t *buffer=nullptr;
+    uint8_t *buffer=nullptr;
     RETURN_NOT_OK(spill_pool_->map_all(&buffer));
     int64_t nbytes = spill_pool_->bytes_allocated();
 
     RETURN_NOT_OK(splitter_->data_file_os_->Write(buffer, nbytes));
+    spill_pool_->Free(buffer, nbytes);
 
     spill_pool_.reset();
 
@@ -206,21 +241,30 @@ class Splitter::PartitionWriter {
               return acc+arrow::BitUtil::RoundUpToMultipleOf8(buffer->size());
             }
          });
-      std::cout << " payload.bodylength = " << payload->body_length << std::endl;
+      std::cout << " payload.bodylength = " << payload->body_length << " total meta size = " << payload->metadata->size()<< std::endl;
       std::cout << " total buf size = " << totalsize << std::endl;
 
       uint8_t* buf;
       RETURN_NOT_OK(spill_pool_->Allocate(totalsize, &buf));
       
+      uint8_t* cur_buf=buf;
+
       for (auto& buffer: payload->body_buffers)
       {
         if (buffer) {
           int64_t size = buffer->size();
-          memcpy(buf,buffer->data(),size);
+          memcpy(cur_buf,buffer->data(),size);
+          cur_buf+=buffer->size();
+          
           int64_t padding = arrow::BitUtil::RoundUpToMultipleOf8(size) - size;
-          memset(buf+buffer->size(),0,padding);
+
+          memset(cur_buf,0,padding);
+          cur_buf+=padding;
+          
         }
       }
+      spill_pool_->Free(buf, totalsize);
+
       payload.reset();
     }
 #endif
@@ -234,6 +278,7 @@ class Splitter::PartitionWriter {
       RETURN_NOT_OK(arrow::ipc::WriteIpcPayload(
           *payload, splitter_->options_.ipc_write_options, os, &metadata_length));
       payload = nullptr;
+      std::cout << " payload metadata_length = " << metadata_length << std::endl;
     }
 #endif
     return arrow::Status::OK();
