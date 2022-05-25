@@ -73,7 +73,7 @@ public:
       ARROW_CHECK_NE(fd,-1) << " spill file open failed ";
     }
     ARROW_CHECK_NE(ftruncate(fd, length_+size),-1) << " truncate file open failed ";
-    std::cout << " mmap length = " << length_+size << std::endl;
+    std::cout << " mmap length = " << length_+size << " length is " << length_ << " size is " << size<< std::endl;
     mapped_addr_ = mmap(NULL, length_+size, PROT_WRITE|PROT_READ, MAP_SHARED, fd, 0);
     
     ARROW_CHECK_NE(mapped_addr_, (void*)-1) << " spill file mmap failed";
@@ -188,7 +188,7 @@ class Splitter::PartitionWriter {
     ARROW_ASSIGN_OR_RAISE(after_write, data_file_os->Tell());
     partition_length = after_write - before_write;
 
-    std::cout << " after merge size = " << (after_write - before_write) << std::endl;
+    std::cout << " after write size = " << (after_write - before_write) << std::endl;
 
     return arrow::Status::OK();
   }
@@ -254,7 +254,7 @@ class Splitter::PartitionWriter {
       RETURN_NOT_OK(arrow::ipc::WriteIpcPayload(
           *payload, splitter_->options_.ipc_write_options, spill_outputstream.get(), &metadata_length));
       std::cout << " metadata_length = " << metadata_length << " calcualted size is " << arrow::ipc::PaddedLength(
-          payload->metadata->size() + 8, splitter_->options_.ipc_write_options.alignment);          
+          payload->metadata->size() + 8, splitter_->options_.ipc_write_options.alignment) << " data size = " << payload->body_length << std::endl;          
       payload.reset();
     }
 #endif
