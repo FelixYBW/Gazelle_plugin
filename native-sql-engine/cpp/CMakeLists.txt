@@ -4,7 +4,7 @@ project(spark_columnar_plugin)
 #add_definitions(-DSKIPWRITE -DSKIPCOMPRESS )
 #add_definitions(-DAVX512SUPPORT )
 
-#add_compile_options(-g)
+add_compile_options(-g -O0)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(root_directory ${PROJECT_BINARY_DIR})

@@ -18,6 +18,7 @@
 #include "shuffle/splitter.h"
 
 #include <arrow/ipc/writer.h>
+#include <arrow/ipc/util.h>
 #include <arrow/memory_pool.h>
 #include <arrow/type.h>
 #include <arrow/util/bit_util.h>
@@ -177,12 +178,17 @@ class Splitter::PartitionWriter {
       }
     }
 
+    ARROW_ASSIGN_OR_RAISE(auto after_write, data_file_os->Tell());
+    std::cout << " after merge size = " << (after_write - before_write) << std::endl;
+
     RETURN_NOT_OK(WriteRecordBatchPayload(data_file_os.get()));
     RETURN_NOT_OK(WriteEOS(data_file_os.get()));
     ClearCache();
 
-    ARROW_ASSIGN_OR_RAISE(auto after_write, data_file_os->Tell());
+    ARROW_ASSIGN_OR_RAISE(after_write, data_file_os->Tell());
     partition_length = after_write - before_write;
+
+    std::cout << " after merge size = " << (after_write - before_write) << std::endl;
 
     return arrow::Status::OK();
   }
@@ -215,6 +221,8 @@ class Splitter::PartitionWriter {
 
     spill_pool_.reset();
 
+    std::cout << " in mergespill size = " << nbytes << std::endl;
+
     auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
     RETURN_NOT_OK(fs->DeleteFile(spilled_file_));
     bytes_spilled += nbytes;
@@ -234,37 +242,19 @@ class Splitter::PartitionWriter {
 #ifndef SKIPWRITE
     for (auto& payload : splitter_->partition_cached_recordbatch_[partition_id_]) {
         // Now write the buffers
-      int64_t totalsize =
-         std::accumulate(payload->body_buffers.begin(),payload->body_buffers.end(),0L,
-         [](int64_t acc, const std::shared_ptr<arrow::Buffer>& buffer){
-            if (buffer) {
-              return acc+arrow::BitUtil::RoundUpToMultipleOf8(buffer->size());
-            }
-         });
-      std::cout << " payload.bodylength = " << payload->body_length << " total meta size = " << payload->metadata->size()<< std::endl;
-      std::cout << " total buf size = " << totalsize << std::endl;
-
-      uint8_t* buf;
-      RETURN_NOT_OK(spill_pool_->Allocate(totalsize, &buf));
+      int64_t totalsize = payload->body_length + arrow::ipc::PaddedLength(
+          payload->metadata->size() + 8, splitter_->options_.ipc_write_options.alignment);
       
-      uint8_t* cur_buf=buf;
+      ARROW_ASSIGN_OR_RAISE(std::shared_ptr<arrow::ResizableBuffer> spill_buffer,
+                        arrow::AllocateResizableBuffer(totalsize, spill_pool_.get()));
+      std::shared_ptr<arrow::io::OutputStream> spill_outputstream = 
+        std::make_shared<arrow::io::BufferOutputStream>(spill_buffer);
 
-      for (auto& buffer: payload->body_buffers)
-      {
-        if (buffer) {
-          int64_t size = buffer->size();
-          memcpy(cur_buf,buffer->data(),size);
-          cur_buf+=buffer->size();
-          
-          int64_t padding = arrow::BitUtil::RoundUpToMultipleOf8(size) - size;
-
-          memset(cur_buf,0,padding);
-          cur_buf+=padding;
-          
-        }
-      }
-      spill_pool_->Free(buf, totalsize);
-
+      int32_t metadata_length = 0;
+      RETURN_NOT_OK(arrow::ipc::WriteIpcPayload(
+          *payload, splitter_->options_.ipc_write_options, spill_outputstream.get(), &metadata_length));
+      std::cout << " metadata_length = " << metadata_length << " calcualted size is " << arrow::ipc::PaddedLength(
+          payload->metadata->size() + 8, splitter_->options_.ipc_write_options.alignment);          
       payload.reset();
     }
 #endif
@@ -278,7 +268,6 @@ class Splitter::PartitionWriter {
       RETURN_NOT_OK(arrow::ipc::WriteIpcPayload(
           *payload, splitter_->options_.ipc_write_options, os, &metadata_length));
       payload = nullptr;
-      std::cout << " payload metadata_length = " << metadata_length << std::endl;
     }
 #endif
     return arrow::Status::OK();
@@ -576,7 +565,8 @@ int64_t batch_nbytes(std::shared_ptr<arrow::RecordBatch> batch) {
   return batch_nbytes(*batch);
 }
 
-arrow::Status Splitter::CacheRecordBatch(int32_t partition_id, bool reset_buffers) {
+arrow::Status Splitter::
+CacheRecordBatch(int32_t partition_id, bool reset_buffers) {
   static int printed = 0;
 
   if (partition_buffer_idx_base_[partition_id] > 0) {
