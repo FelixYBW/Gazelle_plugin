@@ -179,7 +179,7 @@ class Splitter::PartitionWriter {
     }
 
     ARROW_ASSIGN_OR_RAISE(auto after_write, data_file_os->Tell());
-    std::cout << " after merge size = " << (after_write - before_write) << std::endl;
+    std::cout << " after merge size = " << (after_write - before_write) << " before write = " << before_write << std::endl;
 
     RETURN_NOT_OK(WriteRecordBatchPayload(data_file_os.get()));
     RETURN_NOT_OK(WriteEOS(data_file_os.get()));
@@ -224,7 +224,7 @@ class Splitter::PartitionWriter {
     std::cout << " in mergespill size = " << nbytes << std::endl;
 
     auto fs = std::make_shared<arrow::fs::LocalFileSystem>();
-    RETURN_NOT_OK(fs->DeleteFile(spilled_file_));
+    //RETURN_NOT_OK(fs->DeleteFile(spilled_file_));
     bytes_spilled += nbytes;
     return arrow::Status::OK();
   }
@@ -408,6 +408,7 @@ arrow::Status Splitter::Init() {
   // dir with prefix "columnar-shuffle"
   if (options_.data_file.length() == 0) {
     ARROW_ASSIGN_OR_RAISE(options_.data_file, CreateTempShuffleFile(configured_dirs_[0]));
+    std::cout << " data file is " << options_.data_file <<std::endl;
   }
 
   auto& ipc_write_options = options_.ipc_write_options;
