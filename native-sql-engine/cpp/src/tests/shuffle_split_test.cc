@@ -209,6 +209,7 @@ const std::vector<std::string> SplitterTest::input_data_2 = {
 
 TEST_F(SplitterTest, TestSingleSplitter) {
   split_options_.buffer_size = 10;
+  split_options_.buffered_write = false;
 
   ARROW_ASSIGN_OR_THROW(splitter_, Splitter::Make("rr", schema_, 1, split_options_))
 

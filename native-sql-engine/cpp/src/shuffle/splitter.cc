@@ -216,10 +216,15 @@ class Splitter::PartitionWriter {
     RETURN_NOT_OK(spill_pool_->map_all(&buffer));
     int64_t nbytes = spill_pool_->bytes_allocated();
 
+    ARROW_ASSIGN_OR_RAISE(auto before_write, splitter_->data_file_os_->Tell());
+    std::cout << " in merge spill, before write is " << before_write << std::endl;
     RETURN_NOT_OK(splitter_->data_file_os_->Write(buffer, nbytes));
     spill_pool_->Free(buffer, nbytes);
 
     spill_pool_.reset();
+    std::cout << " spill file byete " << nbytes << std::endl;
+    ARROW_ASSIGN_OR_RAISE(auto after_write, splitter_->data_file_os_->Tell());
+    std::cout << " in merge spill, after write is " << after_write << " write size is " << after_write-before_write << std::endl;
 
     std::cout << " in mergespill size = " << nbytes << std::endl;
 
