@@ -320,28 +320,21 @@ class BenchmarkShuffleSplit_CacheScan_Benchmark : public BenchmarkShuffleSplit {
                 int64_t& num_batches, int64_t& num_rows, int64_t& split_time,
                 const int num_partitions, SplitOptions options, benchmark::State& state) {
     std::vector<int> local_column_indices;
-    // local_column_indices.push_back(0);
-    /*    local_column_indices.push_back(0);
+        local_column_indices.push_back(0);
         local_column_indices.push_back(1);
         local_column_indices.push_back(2);
         local_column_indices.push_back(4);
         local_column_indices.push_back(5);
         local_column_indices.push_back(6);
-        local_column_indices.push_back(7);
-*/
-    local_column_indices.push_back(8);
-    local_column_indices.push_back(9);
-    local_column_indices.push_back(13);
-    local_column_indices.push_back(14);
-    local_column_indices.push_back(15);
 
     std::shared_ptr<arrow::Schema> local_schema;
     arrow::FieldVector fields;
-    fields.push_back(schema->field(8));
-    fields.push_back(schema->field(9));
-    fields.push_back(schema->field(13));
-    fields.push_back(schema->field(14));
-    fields.push_back(schema->field(15));
+    fields.push_back(schema->field(0));
+    fields.push_back(schema->field(1));
+    fields.push_back(schema->field(2));
+    fields.push_back(schema->field(4));
+    fields.push_back(schema->field(5));
+    fields.push_back(schema->field(6));
     local_schema = std::make_shared<arrow::Schema>(fields);
 
     if (state.thread_index() == 0) std::cout << local_schema->ToString() << std::endl;
