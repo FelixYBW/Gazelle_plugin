@@ -481,7 +481,7 @@ int main(int argc, char** argv) {
   std::cout << "partitions = " << partitions << std::endl;
   std::cout << "threads = " << threads << std::endl;
   std::cout << "datafile = " << datafile << std::endl;
-
+/*
   sparkcolumnarplugin::shuffle::BenchmarkShuffleSplit_CacheScan_Benchmark bck(datafile);
 
   benchmark::RegisterBenchmark("BenchmarkShuffleSplit::CacheScan", bck)
@@ -491,20 +491,20 @@ int main(int argc, char** argv) {
       ->ReportAggregatesOnly(false)
       ->MeasureProcessCPUTime()
       ->Unit(benchmark::kSecond);
-
-  /*    sparkcolumnarplugin::shuffle::BenchmarkShuffleSplit_IterateScan_Benchmark
+*/
+      sparkcolumnarplugin::shuffle::BenchmarkShuffleSplit_IterateScan_Benchmark
       bck(datafile);
 
       benchmark::RegisterBenchmark("BenchmarkShuffleSplit::IterateScan", bck)
         ->Iterations(1)
           ->Args({96*2, arrow::Compression::FASTPFOR})
+          ->Threads(24)
+          ->Unit(benchmark::kSecond);
+/*
           ->Args({96*4, arrow::Compression::FASTPFOR})
           ->Args({96*8, arrow::Compression::FASTPFOR})
           ->Args({96*16, arrow::Compression::FASTPFOR})
           ->Args({96*32, arrow::Compression::FASTPFOR})
-          ->Threads(24)
-          ->Unit(benchmark::kSecond);
-
       benchmark::RegisterBenchmark("BenchmarkShuffleSplit::IterateScan", bck)
         ->Iterations(1)
           ->Args({4096, arrow::Compression::FASTPFOR})
